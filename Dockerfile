@@ -58,6 +58,10 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends chromium \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /app/apps/web/.next/standalone ./
 COPY --from=build /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=build /app/apps/web/public ./apps/web/public
@@ -74,6 +78,10 @@ ENV HOSTNAME=0.0.0.0
 ENV NEXT_PUBLIC_API_URL=/api/v1
 ENV API_INTERNAL_URL=http://127.0.0.1:4000
 ENV LOCAL_STORAGE_PATH=/app/storage
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends chromium \
+  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app /app
 

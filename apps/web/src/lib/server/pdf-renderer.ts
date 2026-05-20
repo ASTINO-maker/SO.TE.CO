@@ -1,12 +1,32 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const execFileAsync = promisify(execFile);
-const CHROME_BIN = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+
+function resolveChromeBin(): string {
+  if (process.env.CHROME_BIN) return process.env.CHROME_BIN;
+
+  const candidates = [
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  ];
+
+  for (const bin of candidates) {
+    if (existsSync(bin)) return bin;
+  }
+
+  throw new Error("Chrome/Chromium not found. Set the CHROME_BIN environment variable.");
+}
+
+const CHROME_BIN = resolveChromeBin();
 const PDF_CACHE_TTL_MS = 60_000;
 const PDF_VIRTUAL_TIME_BUDGET_MS = Number.parseInt(process.env.PDF_VIRTUAL_TIME_BUDGET_MS ?? "600", 10);
 const pdfBufferCache = new Map<string, { buffer: Buffer; expiresAt: number }>();
@@ -56,6 +76,8 @@ async function renderPdfBufferUncached(filename: string, markup: string) {
     await execFileAsync(CHROME_BIN, [
       "--headless",
       "--disable-gpu",
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
       "--allow-file-access-from-files",
       "--run-all-compositor-stages-before-draw",
       `--virtual-time-budget=${Number.isFinite(PDF_VIRTUAL_TIME_BUDGET_MS) ? Math.max(150, PDF_VIRTUAL_TIME_BUDGET_MS) : 600}`,
