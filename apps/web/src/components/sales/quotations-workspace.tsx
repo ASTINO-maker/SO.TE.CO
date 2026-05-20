@@ -60,6 +60,13 @@ interface NewQuotationFormState {
   note: string;
 }
 
+type QuotationFormErrors = Partial<Record<"client" | "lines", string>>;
+
+type QuotationLineErrors = Record<
+  string,
+  Partial<Record<"description" | "unitPrice", string>>
+>;
+
 interface PersistedQuotationClient {
   name: string;
   code?: string;
@@ -104,8 +111,8 @@ interface DraftQuotationPreview {
 function createDefaultNewQuotationForm(client = ""): NewQuotationFormState {
   return {
     client,
-    issueDate: "2026-04-01",
-    validUntil: "2026-05-01",
+    issueDate: "",
+    validUntil: "",
     chantier: "",
     scope: "",
     amount: "",
@@ -194,6 +201,8 @@ export function QuotationsWorkspace() {
   const [editingQuotationId, setEditingQuotationId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState("");
   const [dialogError, setDialogError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<QuotationFormErrors>({});
+  const [lineErrors, setLineErrors] = useState<QuotationLineErrors>({});
   const [submitting, setSubmitting] = useState(false);
   const [newQuotationForm, setNewQuotationForm] = useState<NewQuotationFormState>(createDefaultNewQuotationForm());
   const [draftLines, setDraftLines] = useState(createDefaultDraftLines);
@@ -284,8 +293,8 @@ export function QuotationsWorkspace() {
     return {
       number: "DEVIS N° Q-2026-DRAFT",
       status: "DRAFT",
-      issueDate: newQuotationForm.issueDate ? formatFormalQuotationDate(newQuotationForm.issueDate) : "01/04/2026",
-      validUntil: newQuotationForm.validUntil ? formatFormalQuotationDate(newQuotationForm.validUntil) : "01/05/2026",
+      issueDate: newQuotationForm.issueDate ? formatFormalQuotationDate(newQuotationForm.issueDate) : "À définir",
+      validUntil: newQuotationForm.validUntil ? formatFormalQuotationDate(newQuotationForm.validUntil) : "À définir",
       client: clientName,
       clientDetails: buildQuotationClientDetails(clientName, clientDirectory),
       chantier: newQuotationForm.chantier.trim() || "Chantier à définir",
@@ -308,6 +317,19 @@ export function QuotationsWorkspace() {
     setDraftLines((current) =>
       current.map((line) => (line.id === id ? { ...line, [field]: value } : line)),
     );
+    setLineErrors((current) => {
+      const currentLineErrors = current[id];
+      if (!currentLineErrors?.[field as "description" | "unitPrice"]) {
+        return current;
+      }
+
+      const nextLineErrors = { ...currentLineErrors };
+      delete nextLineErrors[field as "description" | "unitPrice"];
+      return { ...current, [id]: nextLineErrors };
+    });
+    if (field === "description" || field === "unitPrice") {
+      setFieldErrors((current) => ({ ...current, lines: undefined }));
+    }
   }
 
   function addDraftLine() {
@@ -330,6 +352,8 @@ export function QuotationsWorkspace() {
     const nextForm = createDefaultNewQuotationForm(clientOptions[0] ?? "");
     const nextDraftLines = createDefaultDraftLines();
     setDialogError("");
+    setFieldErrors({});
+    setLineErrors({});
     setEditingQuotationId(null);
     setNewQuotationForm(nextForm);
     setDraftLines(nextDraftLines);
@@ -342,6 +366,8 @@ export function QuotationsWorkspace() {
     const nextForm = createDefaultNewQuotationForm(clientOptions[0] ?? "");
     const nextDraftLines = createDefaultDraftLines();
     setDialogError("");
+    setFieldErrors({});
+    setLineErrors({});
     setEditingQuotationId(null);
     setNewQuotationForm(nextForm);
     setDraftLines(nextDraftLines);
@@ -376,6 +402,8 @@ export function QuotationsWorkspace() {
         : [{ id: "quotation-edit-line-1", description: "", quantity: "1", unit: "u", unitPrice: "" }];
     setEditingQuotationId(quotation.id);
     setDialogError("");
+    setFieldErrors({});
+    setLineErrors({});
     setSubmitting(false);
     setNewQuotationForm(nextForm);
     setDraftLines(nextDraftLines);
@@ -485,6 +513,8 @@ export function QuotationsWorkspace() {
       const nextDraftLines = createDefaultDraftLines();
       setEditingQuotationId(null);
       setDialogError("");
+      setFieldErrors({});
+      setLineErrors({});
       setSubmitting(false);
       setNewQuotationForm(nextForm);
       setDraftLines(nextDraftLines);
@@ -556,23 +586,65 @@ export function QuotationsWorkspace() {
     const clientName = newQuotationForm.client.trim();
     const chantier = newQuotationForm.chantier.trim();
     const scope = newQuotationForm.scope.trim();
-    const validLines = draftLines
-      .map((line) => ({
+    const nextFieldErrors: QuotationFormErrors = {};
+    const nextLineErrors: QuotationLineErrors = {};
+    const normalizedLines = draftLines.map((line) => ({
+        id: line.id,
         description: line.description.trim(),
         quantityValue: Math.max(1, parseQuotationNumber(line.quantity)),
         unitLabel: (line.unit ?? "").trim() || "u",
         unitPriceValue: parseQuotationNumber(line.unitPrice),
-      }))
-      .filter((line) => line.description && line.unitPriceValue > 0);
+      }));
+    const validLines = normalizedLines.filter((line) => line.description && line.unitPriceValue > 0);
     const amountValue = validLines.reduce((sum, line) => sum + line.quantityValue * line.unitPriceValue, 0);
     const itemCount = validLines.length;
 
-    if (!clientName || !chantier || !scope || amountValue <= 0 || itemCount === 0) {
-      setDialogError("Renseignez le client, le chantier, la demande de prix et au moins une ligne tarifee avant de creer le devis.");
+    if (!clientName) {
+      nextFieldErrors.client = "Sélectionnez un client avant de créer le devis.";
+    }
+
+    for (const line of normalizedLines) {
+      const hasAnyLineInput = Boolean(line.description) || line.unitPriceValue > 0;
+      if (!hasAnyLineInput) {
+        continue;
+      }
+
+      if (!line.description) {
+        nextLineErrors[line.id] = {
+          ...nextLineErrors[line.id],
+          description: "Désignation obligatoire pour cette ligne.",
+        };
+      }
+
+      if (line.unitPriceValue <= 0) {
+        nextLineErrors[line.id] = {
+          ...nextLineErrors[line.id],
+          unitPrice: "Prix obligatoire.",
+        };
+      }
+    }
+
+    if (amountValue <= 0 || itemCount === 0) {
+      nextFieldErrors.lines = "Ajoutez au moins une ligne avec une désignation et un prix.";
+      const firstLineId = draftLines[0]?.id;
+      if (firstLineId && !Object.keys(nextLineErrors).length) {
+        nextLineErrors[firstLineId] = {
+          description: "Désignation obligatoire.",
+          unitPrice: "Prix obligatoire.",
+        };
+      }
+    }
+
+    if (Object.keys(nextFieldErrors).length || Object.keys(nextLineErrors).length) {
+      setFieldErrors(nextFieldErrors);
+      setLineErrors(nextLineErrors);
+      setDialogError("");
       return;
     }
     setSubmitting(true);
     setDialogError("");
+    setFieldErrors({});
+    setLineErrors({});
 
     try {
       const payload = {
@@ -580,10 +652,10 @@ export function QuotationsWorkspace() {
         status: currentEditingQuotationId
           ? toApiQuotationStatus(existingStatus || "DRAFT")
           : "DRAFT",
-        issueDate: newQuotationForm.issueDate,
-        validUntil: newQuotationForm.validUntil,
-        chantier,
-        scope,
+        issueDate: newQuotationForm.issueDate || undefined,
+        validUntil: newQuotationForm.validUntil || undefined,
+        chantier: chantier || undefined,
+        scope: scope || undefined,
         amount: amountValue,
         itemCount,
         lines: validLines.map((line) => ({
@@ -930,17 +1002,22 @@ export function QuotationsWorkspace() {
             <section className="rounded-[1.5rem] border border-black/6 bg-white p-5 shadow-sm">
               <div className="mb-4">
                 <p className="text-base font-semibold text-slate-800">1. Informations client</p>
-                <p className="mt-1 text-sm text-slate-500">Identité du client, date d'émission et période de validité du devis.</p>
+                <p className="mt-1 text-sm text-slate-500">Identité du client, dates optionnelles et période de validité du devis.</p>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 <FormField label="Client / société">
                   <select
                     value={newQuotationForm.client}
-                    onChange={(event) =>
-                      setNewQuotationForm((current) => ({ ...current, client: event.target.value }))
-                    }
-                    className="flex h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
+                    aria-invalid={Boolean(fieldErrors.client)}
+                    onChange={(event) => {
+                      setNewQuotationForm((current) => ({ ...current, client: event.target.value }));
+                      setFieldErrors((current) => ({ ...current, client: undefined }));
+                    }}
+                    className={cn(
+                      "flex h-11 w-full rounded-xl border border-input bg-background px-3 text-sm",
+                      fieldErrors.client && "border-rose-300 bg-rose-50 focus-visible:ring-rose-200",
+                    )}
                   >
                     {clientOptions.length ? (
                       clientOptions.map((clientName) => <option key={clientName}>{clientName}</option>)
@@ -948,8 +1025,9 @@ export function QuotationsWorkspace() {
                       <option value="">Aucun client disponible</option>
                     )}
                   </select>
+                  {fieldErrors.client ? <p className="text-xs font-medium text-rose-600">{fieldErrors.client}</p> : null}
                 </FormField>
-                <FormField label="Date d'émission">
+                <FormField label="Date d'émission (optionnel)">
                   <Input
                     type="date"
                     className="h-11 rounded-xl"
@@ -959,7 +1037,7 @@ export function QuotationsWorkspace() {
                     }
                   />
                 </FormField>
-                <FormField label="Valable jusqu'au">
+                <FormField label="Valable jusqu'au (optionnel)">
                   <Input
                     type="date"
                     className="h-11 rounded-xl"
@@ -975,11 +1053,11 @@ export function QuotationsWorkspace() {
             <section className="rounded-[1.5rem] border border-black/6 bg-white p-5 shadow-sm">
               <div className="mb-4">
                 <p className="text-base font-semibold text-slate-800">2. Chantier et objet du devis</p>
-                <p className="mt-1 text-sm text-slate-500">Décrivez le projet de construction métallique et la portée de l'offre.</p>
+                <p className="mt-1 text-sm text-slate-500">Décrivez le projet de construction métallique et la portée de l'offre si nécessaire.</p>
               </div>
 
               <div className="grid gap-4">
-                <FormField label="Chantier / projet">
+                <FormField label="Chantier / projet (optionnel)">
                   <Input
                     className="h-11 rounded-xl"
                     value={newQuotationForm.chantier}
@@ -989,7 +1067,7 @@ export function QuotationsWorkspace() {
                     placeholder="Ex: Villa Chotrana, Sidi Bou Saïd"
                   />
                 </FormField>
-                <FormField label="Objet du devis">
+                <FormField label="Objet du devis (optionnel)">
                   <Input
                     className="h-11 rounded-xl"
                     value={newQuotationForm.scope}
@@ -1009,6 +1087,7 @@ export function QuotationsWorkspace() {
                   <p className="text-sm text-muted-foreground">
                     Détaillez les fournitures, fabrications, poses ou transports à facturer.
                   </p>
+                  {fieldErrors.lines ? <p className="mt-2 text-xs font-medium text-rose-600">{fieldErrors.lines}</p> : null}
                 </div>
                 <Button type="button" variant="outline" className="rounded-2xl" onClick={addDraftLine}>
                   <Plus className="h-4 w-4" />
@@ -1031,12 +1110,21 @@ export function QuotationsWorkspace() {
 
                     return (
                       <div key={line.id} className="grid grid-cols-[1.5fr_0.45fr_0.45fr_0.75fr_0.85fr_48px] gap-3 px-4 py-3">
-                        <Input
-                          className="h-11 rounded-xl"
-                          value={line.description}
-                          onChange={(event) => updateDraftLine(line.id, "description", event.target.value)}
-                          placeholder="Objet / description de prestation"
-                        />
+                        <div className="grid gap-1">
+                          <Input
+                            className={cn(
+                              "h-11 rounded-xl",
+                              lineErrors[line.id]?.description && "border-rose-300 bg-rose-50 focus-visible:ring-rose-200",
+                            )}
+                            aria-invalid={Boolean(lineErrors[line.id]?.description)}
+                            value={line.description}
+                            onChange={(event) => updateDraftLine(line.id, "description", event.target.value)}
+                            placeholder="Objet / description de prestation"
+                          />
+                          {lineErrors[line.id]?.description ? (
+                            <p className="text-xs font-medium text-rose-600">{lineErrors[line.id]?.description}</p>
+                          ) : null}
+                        </div>
                         <Input
                           className="h-11 rounded-xl text-center"
                           value={line.quantity}
@@ -1049,12 +1137,21 @@ export function QuotationsWorkspace() {
                           onChange={(event) => updateDraftLine(line.id, "unit", event.target.value)}
                           placeholder="u, m, ml, m², kg…"
                         />
-                        <Input
-                          className="h-11 rounded-xl"
-                          value={line.unitPrice}
-                          onChange={(event) => updateDraftLine(line.id, "unitPrice", event.target.value)}
-                          placeholder="0"
-                        />
+                        <div className="grid gap-1">
+                          <Input
+                            className={cn(
+                              "h-11 rounded-xl",
+                              lineErrors[line.id]?.unitPrice && "border-rose-300 bg-rose-50 focus-visible:ring-rose-200",
+                            )}
+                            aria-invalid={Boolean(lineErrors[line.id]?.unitPrice)}
+                            value={line.unitPrice}
+                            onChange={(event) => updateDraftLine(line.id, "unitPrice", event.target.value)}
+                            placeholder="0"
+                          />
+                          {lineErrors[line.id]?.unitPrice ? (
+                            <p className="text-xs font-medium text-rose-600">{lineErrors[line.id]?.unitPrice}</p>
+                          ) : null}
+                        </div>
                         <div className="flex h-11 items-center rounded-xl border border-black/8 bg-white px-3 text-sm font-semibold text-slate-700">
                           {formatQuotationTnd(lineTotal)}
                         </div>

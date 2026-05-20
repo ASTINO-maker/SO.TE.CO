@@ -112,7 +112,11 @@ export class SalesService {
   async createQuotation(user: AuthenticatedUser | undefined, payload: CreateQuotationDto) {
     const scope = await this.resolveScope(user);
     const client = await this.findClientByName(scope.tenantId, payload.client);
-    const number = await this.nextQuotationNumber(scope.tenantId, new Date(payload.issueDate));
+    const issueDate = payload.issueDate ? new Date(payload.issueDate) : new Date();
+    const validUntil = payload.validUntil ? new Date(payload.validUntil) : null;
+    const chantierTitle = payload.chantier?.trim() || "Chantier à définir";
+    const scopeText = payload.scope?.trim() || "";
+    const number = await this.nextQuotationNumber(scope.tenantId, issueDate);
     const customLines = (payload.lines ?? [])
       .map((line) => ({
         label: line.description.trim(),
@@ -125,7 +129,7 @@ export class SalesService {
 
     const lines = customLines.length
       ? customLines
-      : this.buildQuotationLines(payload.scope.trim(), payload.itemCount, payload.amount);
+      : this.buildQuotationLines(scopeText || "Prestation", payload.itemCount, payload.amount);
     const totalAmountValue = lines.reduce((sum, line) => sum + line.totalValue, 0);
     const totalAmount = new Prisma.Decimal(totalAmountValue);
 
@@ -136,14 +140,14 @@ export class SalesService {
         clientId: client.id,
         createdByUserId: scope.userId ?? undefined,
         number,
-        title: payload.chantier.trim(),
+        title: chantierTitle,
         status: payload.status,
-        issueDate: new Date(payload.issueDate),
-        validUntil: new Date(payload.validUntil),
+        issueDate,
+        validUntil,
         currency: "TND",
         subtotalAmount: totalAmount,
         totalAmount,
-        clientNotes: payload.scope.trim(),
+        clientNotes: scopeText || null,
         internalNotes: payload.note?.trim() || undefined,
         items: {
           create: lines.map((line, index) => ({
@@ -245,8 +249,8 @@ export class SalesService {
         ...(payload.status ? { status: payload.status } : {}),
         ...(payload.issueDate ? { issueDate: new Date(payload.issueDate) } : {}),
         ...(payload.validUntil ? { validUntil: new Date(payload.validUntil) } : {}),
-        ...(payload.chantier !== undefined ? { title: payload.chantier.trim() } : {}),
-        ...(payload.scope !== undefined ? { clientNotes: payload.scope.trim() } : {}),
+        ...(payload.chantier !== undefined ? { title: payload.chantier.trim() || "Chantier à définir" } : {}),
+        ...(payload.scope !== undefined ? { clientNotes: payload.scope.trim() || null } : {}),
         ...(payload.note !== undefined ? { internalNotes: payload.note?.trim() || null } : {}),
         ...(validLines
           ? {

@@ -42,18 +42,22 @@ export class CreateQuotationDto {
   @IsEnum(QuotationStatus)
   status!: QuotationStatus;
 
+  @IsOptional()
   @IsDateString()
-  issueDate!: string;
+  issueDate?: string;
 
+  @IsOptional()
   @IsDateString()
-  validUntil!: string;
+  validUntil?: string;
 
+  @IsOptional()
   @IsString()
   @MaxLength(200)
-  chantier!: string;
+  chantier?: string;
 
+  @IsOptional()
   @IsString()
-  scope!: string;
+  scope?: string;
 
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 3 })
