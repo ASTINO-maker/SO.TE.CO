@@ -32,6 +32,7 @@ ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 COPY apps/api apps/api
 COPY apps/web apps/web
 COPY packages packages
+COPY scripts scripts
 
 RUN pnpm --filter @sotec/config build \
   && pnpm --filter @sotec/contracts build \
