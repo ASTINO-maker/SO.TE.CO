@@ -341,6 +341,8 @@ export class SalesService {
     const scope = await this.resolveScope(user);
     const client = await this.findClientByName(scope.tenantId, payload.client);
     const number = await this.nextInvoiceNumber(scope.tenantId);
+    const issueDate = payload.issueDate ? new Date(payload.issueDate) : new Date();
+    const dueDate = payload.dueDate ? new Date(payload.dueDate) : null;
     const validLines = payload.lines
       .map((line) => ({
         label: line.description.trim(),
@@ -364,8 +366,8 @@ export class SalesService {
         createdByUserId: scope.userId ?? undefined,
         number,
         status: InvoiceStatus.ISSUED,
-        issueDate: new Date(payload.issueDate),
-        dueDate: new Date(payload.dueDate),
+        issueDate,
+        dueDate,
         currency: "TND",
         subtotalAmount: new Prisma.Decimal(totalAmount),
         totalAmount: new Prisma.Decimal(totalAmount),
@@ -585,22 +587,30 @@ export class SalesService {
 
   async createDeliveryNote(user: AuthenticatedUser | undefined, payload: CreateDeliveryNoteDto) {
     const scope = await this.resolveScope(user);
-    const project = await this.prisma.project.findFirst({
-      where: {
-        tenantId: scope.tenantId,
-        name: payload.project.trim(),
-        deletedAt: null,
-      },
-      include: {
-        client: true,
-      },
-    });
+    const projectName = payload.project?.trim() || "";
+    const project = projectName
+      ? await this.prisma.project.findFirst({
+          where: {
+            tenantId: scope.tenantId,
+            name: projectName,
+            deletedAt: null,
+          },
+          include: {
+            client: true,
+          },
+        })
+      : null;
 
-    if (!project) {
+    if (projectName && !project) {
       throw new NotFoundException("Project not found");
     }
 
-    const vehicle = await this.ensureVehicle(scope, payload.vehicle);
+    const client = project?.client ?? (payload.client ? await this.findClientByName(scope.tenantId, payload.client) : null);
+    if (!client) {
+      throw new NotFoundException("Client not found");
+    }
+
+    const vehicle = await this.ensureVehicle(scope, payload.vehicle ?? "");
     const number = await this.nextDeliveryNoteNumber(scope.tenantId);
     const items = payload.itemsNote
       .split("\n")
@@ -627,16 +637,16 @@ export class SalesService {
       data: {
         tenantId: scope.tenantId,
         branchId: scope.branchId ?? undefined,
-        clientId: project.clientId,
-        projectId: project.id,
+        clientId: client.id,
+        projectId: project?.id,
         vehicleId: vehicle?.id,
         createdByUserId: scope.userId ?? undefined,
         number,
         status: payload.status,
-        deliveryDate: new Date(payload.scheduledAt),
-        receiverName: payload.responsible.trim(),
-        receiverPhone: project.client.phone || project.client.mobile || undefined,
-        siteAddress: payload.destination.trim(),
+        deliveryDate: payload.scheduledAt ? new Date(payload.scheduledAt) : new Date(),
+        receiverName: payload.responsible?.trim() || client.displayName,
+        receiverPhone: client.phone || client.mobile || undefined,
+        siteAddress: payload.destination?.trim() || this.buildAddress(client.addressLine1, client.postalCode, client.city) || undefined,
         internalNotes: payload.itemsNote.trim(),
         items: {
           create: items.map((item) => ({
@@ -714,11 +724,12 @@ export class SalesService {
       throw new NotFoundException("Delivery note not found");
     }
 
-    const project = payload.project?.trim()
+    const requestedProject = payload.project?.trim();
+    const project = requestedProject
       ? await this.prisma.project.findFirst({
           where: {
             tenantId: scope.tenantId,
-            name: payload.project.trim(),
+            name: requestedProject,
             deletedAt: null,
           },
           include: {
@@ -727,10 +738,11 @@ export class SalesService {
         })
       : null;
 
-    if (payload.project && !project) {
+    if (requestedProject && !project) {
       throw new NotFoundException("Project not found");
     }
 
+    const client = payload.client?.trim() ? await this.findClientByName(scope.tenantId, payload.client) : null;
     const vehicle = payload.vehicle !== undefined ? await this.ensureVehicle(scope, payload.vehicle) : undefined;
     const items = payload.itemsNote
       ? payload.itemsNote
@@ -754,17 +766,24 @@ export class SalesService {
       throw new NotFoundException("At least one delivery item is required");
     }
 
+    const projectUpdate = project
+      ? {
+          projectId: project.id,
+          clientId: project.clientId,
+        }
+      : payload.project !== undefined
+        ? {
+            projectId: null,
+          }
+        : {};
+
     const updated = await this.prisma.deliveryNote.update({
       where: {
         id: existing.id,
       },
       data: {
-        ...(project
-          ? {
-              projectId: project.id,
-              clientId: project.clientId,
-            }
-          : {}),
+        ...projectUpdate,
+        ...(client && !project ? { clientId: client.id } : {}),
         ...(payload.status ? { status: payload.status } : {}),
         ...(payload.destination !== undefined ? { siteAddress: payload.destination.trim() } : {}),
         ...(payload.responsible !== undefined ? { receiverName: payload.responsible.trim() } : {}),
@@ -1324,7 +1343,7 @@ export class SalesService {
     return {
       id: note.id,
       number: note.number,
-      project: note.project?.name || "Unlinked project",
+      project: note.project?.name || "Chantier à définir",
       destination: note.siteAddress || "-",
       responsible: note.receiverName || "-",
       vehicle: [note.vehicle?.make, note.vehicle?.model, note.vehicle?.licensePlate].filter(Boolean).join(" - ") || note.vehicle?.code || "-",

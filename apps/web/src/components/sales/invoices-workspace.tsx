@@ -106,6 +106,7 @@ interface InvoiceFormState {
 interface DeliveryNoteDraftState {
   invoiceId: string;
   invoiceNumber: string;
+  client: string;
   project: string;
   status: "PREPARED" | "IN_TRANSIT" | "DELIVERED";
   destination: string;
@@ -115,13 +116,21 @@ interface DeliveryNoteDraftState {
   itemsNote: string;
 }
 
+type InvoiceFormErrors = Partial<Record<"client" | "lines" | "deliveryItemsNote", string>>;
+
+type InvoiceLineErrors = Record<
+  string,
+  Partial<Record<"description" | "unitPrice", string>>
+>;
+
+type DeliveryDraftErrors = Partial<Record<"itemsNote", string>>;
+
 function createDefaultInvoiceForm(client = "", project = ""): InvoiceFormState {
-  const issueDate = "2026-04-01";
   return {
     origin: "Quotation",
     client,
-    issueDate,
-    dueDate: buildInvoiceDueDate(issueDate),
+    issueDate: "",
+    dueDate: "",
     paymentTerms: "Virement bancaire - 30 jours",
     noteMode: "simple",
     note: "",
@@ -135,10 +144,11 @@ function createDefaultInvoiceForm(client = "", project = ""): InvoiceFormState {
   };
 }
 
-function createEmptyDeliveryDraft(project = ""): DeliveryNoteDraftState {
+function createEmptyDeliveryDraft(project = "", client = ""): DeliveryNoteDraftState {
   return {
     invoiceId: "",
     invoiceNumber: "",
+    client,
     project,
     status: "PREPARED",
     destination: "",
@@ -262,6 +272,9 @@ export function InvoicesWorkspace() {
   const [feedback, setFeedback] = useState("");
   const [dialogError, setDialogError] = useState("");
   const [deliveryDialogError, setDeliveryDialogError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<InvoiceFormErrors>({});
+  const [lineErrors, setLineErrors] = useState<InvoiceLineErrors>({});
+  const [deliveryFieldErrors, setDeliveryFieldErrors] = useState<DeliveryDraftErrors>({});
   const [submitting, setSubmitting] = useState(false);
   const [deliverySubmitting, setDeliverySubmitting] = useState(false);
   const [invoiceForm, setInvoiceForm] = useState<InvoiceFormState>(createDefaultInvoiceForm());
@@ -286,7 +299,7 @@ export function InvoicesWorkspace() {
         const firstClientName = clientResponse.data[0]?.name ?? "";
         const firstProjectTitle = projectResponse.data[0]?.title ?? "";
         setInvoiceForm((current) => (current.client ? current : createDefaultInvoiceForm(firstClientName, firstProjectTitle)));
-        setDeliveryForm((current) => (current.project ? current : createEmptyDeliveryDraft(firstProjectTitle)));
+        setDeliveryForm((current) => (current.project || current.client ? current : createEmptyDeliveryDraft(firstProjectTitle, firstClientName)));
         const firstInvoice = invoiceResponse.data[0];
         if (firstInvoice) {
           setSelectedId((current) => current || firstInvoice.id);
@@ -352,6 +365,8 @@ export function InvoicesWorkspace() {
     setEditingInvoiceId(null);
     setInvoiceForm(nextInvoiceForm);
     setDialogError("");
+    setFieldErrors({});
+    setLineErrors({});
     setSubmitting(false);
     setDraftLines(nextDraftLines);
     invoiceDialogInitialRef.current = serializeInvoiceDialogState(nextInvoiceForm, nextDraftLines, null);
@@ -366,6 +381,8 @@ export function InvoicesWorkspace() {
     setEditingInvoiceId(null);
     setInvoiceForm(nextInvoiceForm);
     setDialogError("");
+    setFieldErrors({});
+    setLineErrors({});
     setSubmitting(false);
     setDraftLines(nextDraftLines);
     invoiceDialogInitialRef.current = null;
@@ -403,6 +420,8 @@ export function InvoicesWorkspace() {
         : [{ id: "edit-line-1", description: "", quantity: "1", unit: "u", unitPrice: "" }];
     setEditingInvoiceId(invoice.id);
     setDialogError("");
+    setFieldErrors({});
+    setLineErrors({});
     setSubmitting(false);
     setInvoiceForm(nextInvoiceForm);
     setDraftLines(nextDraftLines);
@@ -524,6 +543,19 @@ export function InvoicesWorkspace() {
     setDraftLines((current) =>
       current.map((line) => (line.id === id ? { ...line, [field]: value } : line)),
     );
+    if (field === "description" || field === "unitPrice") {
+      setLineErrors((current) => {
+        const currentLineErrors = current[id];
+        if (!currentLineErrors?.[field]) {
+          return current;
+        }
+
+        const nextLineErrors = { ...currentLineErrors };
+        delete nextLineErrors[field];
+        return { ...current, [id]: nextLineErrors };
+      });
+      setFieldErrors((current) => ({ ...current, lines: undefined }));
+    }
   }
 
   function addDraftLine() {
@@ -545,6 +577,8 @@ export function InvoicesWorkspace() {
   function resetDraftForm() {
     setInvoiceForm(createDefaultInvoiceForm(clientOptions[0] ?? "", projectTitles[0] ?? ""));
     setDialogError("");
+    setFieldErrors({});
+    setLineErrors({});
     setSubmitting(false);
     setEditingInvoiceId(null);
     setDraftLines(createDefaultInvoiceDraftLines());
@@ -552,8 +586,9 @@ export function InvoicesWorkspace() {
   }
 
   function resetDeliveryDialog() {
-    setDeliveryForm(createEmptyDeliveryDraft(projectTitles[0] ?? ""));
+    setDeliveryForm(createEmptyDeliveryDraft(projectTitles[0] ?? "", clientOptions[0] ?? ""));
     setDeliveryDialogError("");
+    setDeliveryFieldErrors({});
     setDeliverySubmitting(false);
     deliveryDialogInitialRef.current = null;
   }
@@ -570,6 +605,7 @@ export function InvoicesWorkspace() {
       buildDeliveryItemsText(invoice.lines),
     );
     setDeliveryDialogError("");
+    setDeliveryFieldErrors({});
     setDeliveryForm(nextDeliveryForm);
     deliveryDialogInitialRef.current = serializeDeliveryDialogState(nextDeliveryForm);
     setShowDeliveryDialog(true);
@@ -582,6 +618,8 @@ export function InvoicesWorkspace() {
       setEditingInvoiceId(null);
       setInvoiceForm(nextInvoiceForm);
       setDialogError("");
+      setFieldErrors({});
+      setLineErrors({});
       setSubmitting(false);
       setDraftLines(nextDraftLines);
       invoiceDialogInitialRef.current = serializeInvoiceDialogState(nextInvoiceForm, nextDraftLines, null);
@@ -600,30 +638,52 @@ export function InvoicesWorkspace() {
   }, [invoices]);
 
   async function createDeliveryNoteFromDraft(draft: DeliveryNoteDraftState) {
+    const client = draft.client.trim();
     const project = draft.project.trim();
     const destination = draft.destination.trim();
     const responsible = draft.responsible.trim();
     const scheduledAt = draft.scheduledAt;
     const itemsNote = draft.itemsNote.trim();
-    const scheduledAtDate = new Date(scheduledAt);
+    const scheduledAtDate = scheduledAt ? new Date(scheduledAt) : null;
 
-    if (!project || !destination || !responsible || !scheduledAt || Number.isNaN(scheduledAtDate.getTime()) || !itemsNote) {
-      throw new Error("Choisissez un chantier et renseignez la destination, le responsable, la date et les articles livres.");
+    if (!client) {
+      throw new Error("Sélectionnez un client pour le bon de livraison.");
+    }
+
+    if (!itemsNote) {
+      throw new Error("Ajoutez au moins un article livré.");
+    }
+
+    if (scheduledAtDate && Number.isNaN(scheduledAtDate.getTime())) {
+      throw new Error("La date prévue du bon de livraison est invalide.");
     }
 
     return apiClient.post<{ id: string; number: string }>("/sales/delivery-notes", {
-      project,
+      client,
+      ...(project ? { project } : {}),
       status: draft.status,
-      destination,
-      responsible,
-      vehicle: draft.vehicle.trim() || "-",
-      scheduledAt: scheduledAtDate.toISOString(),
+      ...(destination ? { destination } : {}),
+      ...(responsible ? { responsible } : {}),
+      ...(draft.vehicle.trim() ? { vehicle: draft.vehicle.trim() } : {}),
+      ...(scheduledAtDate ? { scheduledAt: scheduledAtDate.toISOString() } : {}),
       itemsNote,
     });
   }
 
   async function handleCreateDeliveryNoteFromInvoice() {
+    const nextDeliveryFieldErrors: DeliveryDraftErrors = {};
+    if (!deliveryForm.itemsNote.trim()) {
+      nextDeliveryFieldErrors.itemsNote = "Ajoutez au moins un article livré.";
+    }
+
+    if (Object.keys(nextDeliveryFieldErrors).length) {
+      setDeliveryFieldErrors(nextDeliveryFieldErrors);
+      setDeliveryDialogError("");
+      return;
+    }
+
     setDeliveryDialogError("");
+    setDeliveryFieldErrors({});
     setDeliverySubmitting(true);
 
     try {
@@ -648,33 +708,67 @@ export function InvoicesWorkspace() {
     const issueDate = invoiceForm.issueDate;
     const dueDate = invoiceForm.dueDate;
     const paymentTerms = invoiceForm.paymentTerms.trim();
-    const validLines = draftLines
-      .map((line) => ({
+    const nextFieldErrors: InvoiceFormErrors = {};
+    const nextLineErrors: InvoiceLineErrors = {};
+    const normalizedLines = draftLines.map((line) => ({
         ...line,
         description: line.description.trim(),
         quantityValue: Math.max(1, parseDraftNumber(line.quantity)),
         unitLabel: (line.unit ?? "").trim() || "u",
         unitPriceValue: parseDraftNumber(line.unitPrice),
-      }))
-      .filter((line) => line.description && line.unitPriceValue > 0);
+      }));
+    const validLines = normalizedLines.filter((line) => line.description && line.unitPriceValue > 0);
 
-    if (!clientName || !issueDate || !dueDate || validLines.length === 0) {
-      setDialogError("Renseignez le client, les dates et au moins une ligne facturee avant de creer la facture.");
-      return;
+    if (!clientName) {
+      nextFieldErrors.client = "Sélectionnez un client avant de créer la facture.";
     }
-    if (
-      createDelivery &&
-      (!invoiceForm.deliveryProject.trim() ||
-        !invoiceForm.deliveryDestination.trim() ||
-        !invoiceForm.deliveryResponsible.trim() ||
-        !invoiceForm.deliveryScheduledAt ||
-        !buildDeliveryItemsText(validLines).trim())
-    ) {
-      setDialogError("Renseignez les details du bon de livraison avant de creer la facture et le bon ensemble.");
+
+    for (const line of normalizedLines) {
+      const hasAnyLineInput = Boolean(line.description) || line.unitPriceValue > 0;
+      if (!hasAnyLineInput) {
+        continue;
+      }
+
+      if (!line.description) {
+        nextLineErrors[line.id] = {
+          ...nextLineErrors[line.id],
+          description: "Désignation obligatoire pour cette ligne.",
+        };
+      }
+
+      if (line.unitPriceValue <= 0) {
+        nextLineErrors[line.id] = {
+          ...nextLineErrors[line.id],
+          unitPrice: "Prix obligatoire.",
+        };
+      }
+    }
+
+    if (validLines.length === 0) {
+      nextFieldErrors.lines = "Ajoutez au moins une ligne avec une désignation et un prix.";
+      const firstLineId = draftLines[0]?.id;
+      if (firstLineId && !Object.keys(nextLineErrors).length) {
+        nextLineErrors[firstLineId] = {
+          description: "Désignation obligatoire.",
+          unitPrice: "Prix obligatoire.",
+        };
+      }
+    }
+
+    if (createDelivery && invoiceForm.noteMode === "delivery" && !buildDeliveryItemsText(validLines).trim()) {
+      nextFieldErrors.deliveryItemsNote = "Ajoutez au moins un article livré.";
+    }
+
+    if (Object.keys(nextFieldErrors).length || Object.keys(nextLineErrors).length) {
+      setFieldErrors(nextFieldErrors);
+      setLineErrors(nextLineErrors);
+      setDialogError("");
       return;
     }
     setSubmitting(true);
     setDialogError("");
+    setFieldErrors({});
+    setLineErrors({});
 
     try {
       const invoiceNote =
@@ -692,8 +786,8 @@ export function InvoicesWorkspace() {
       const payload = {
         origin: invoiceForm.origin,
         client: clientName,
-        issueDate,
-        dueDate,
+        issueDate: issueDate || undefined,
+        dueDate: dueDate || undefined,
         paymentTerms: paymentTerms || "Virement bancaire - 30 jours",
         note: invoiceNote || undefined,
         lines: validLines.map((line) => ({
@@ -712,6 +806,7 @@ export function InvoicesWorkspace() {
         const createdDelivery = await createDeliveryNoteFromDraft({
           invoiceId: newInvoice.id,
           invoiceNumber: newInvoice.number,
+          client: clientName,
           project: invoiceForm.deliveryProject,
           status: invoiceForm.deliveryStatus,
           destination: invoiceForm.deliveryDestination,
@@ -1039,7 +1134,9 @@ export function InvoicesWorkspace() {
                   </div>
                   <div className="rounded-2xl border border-[#e8dccb] bg-[#fcfbf8] px-4 py-3">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Date</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-800">{formatFormalDocumentDate(invoiceForm.issueDate)}</p>
+                    <p className="mt-2 text-sm font-semibold text-slate-800">
+                      {invoiceForm.issueDate ? formatFormalDocumentDate(invoiceForm.issueDate) : "À définir"}
+                    </p>
                   </div>
                   <div className="rounded-2xl border border-[#e8dccb] bg-[#fcfbf8] px-4 py-3">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total actuel</p>
@@ -1052,8 +1149,15 @@ export function InvoicesWorkspace() {
                 <FormField label="Client facturé">
                   <select
                     value={invoiceForm.client}
-                    onChange={(event) => setInvoiceForm((current) => ({ ...current, client: event.target.value }))}
-                    className="flex h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
+                    aria-invalid={Boolean(fieldErrors.client)}
+                    onChange={(event) => {
+                      setInvoiceForm((current) => ({ ...current, client: event.target.value }));
+                      setFieldErrors((current) => ({ ...current, client: undefined }));
+                    }}
+                    className={cn(
+                      "flex h-11 w-full rounded-xl border border-input bg-background px-3 text-sm",
+                      fieldErrors.client && "border-rose-300 bg-rose-50 focus-visible:ring-rose-200",
+                    )}
                   >
                     {clientOptions.length ? (
                       clientOptions.map((clientName) => <option key={clientName}>{clientName}</option>)
@@ -1061,6 +1165,7 @@ export function InvoicesWorkspace() {
                       <option value="">Aucun client disponible</option>
                     )}
                   </select>
+                  {fieldErrors.client ? <p className="text-xs font-medium text-rose-600">{fieldErrors.client}</p> : null}
                 </FormField>
                 <FormField label="Origine du document">
                   <select
@@ -1078,7 +1183,7 @@ export function InvoicesWorkspace() {
                     <option value="Manual invoice">Facture manuelle</option>
                   </select>
                 </FormField>
-                <FormField label="Date d'émission">
+                <FormField label="Date d'émission (optionnel)">
                   <Input
                     type="date"
                     className="h-11 rounded-xl"
@@ -1102,6 +1207,7 @@ export function InvoicesWorkspace() {
                   <p className="text-sm text-muted-foreground">
                     Chaque ligne correspond à une prestation, un article ou une étape de chantier.
                   </p>
+                  {fieldErrors.lines ? <p className="mt-2 text-xs font-medium text-rose-600">{fieldErrors.lines}</p> : null}
                 </div>
                 <div className="flex items-center gap-3">
                   <Button type="button" variant="outline" className="rounded-2xl" onClick={addDraftLine}>
@@ -1126,12 +1232,21 @@ export function InvoicesWorkspace() {
 
                     return (
                       <div key={line.id} className="grid grid-cols-[1.7fr_0.45fr_0.45fr_0.75fr_0.9fr_48px] gap-3 px-4 py-3">
-                        <Input
-                          className="h-11 rounded-xl"
-                          value={line.description}
-                          onChange={(event) => updateDraftLine(line.id, "description", event.target.value)}
-                          placeholder="Pergola fabrication, garde-corps, structure métallique..."
-                        />
+                        <div className="grid gap-1">
+                          <Input
+                            className={cn(
+                              "h-11 rounded-xl",
+                              lineErrors[line.id]?.description && "border-rose-300 bg-rose-50 focus-visible:ring-rose-200",
+                            )}
+                            aria-invalid={Boolean(lineErrors[line.id]?.description)}
+                            value={line.description}
+                            onChange={(event) => updateDraftLine(line.id, "description", event.target.value)}
+                            placeholder="Pergola fabrication, garde-corps, structure métallique..."
+                          />
+                          {lineErrors[line.id]?.description ? (
+                            <p className="text-xs font-medium text-rose-600">{lineErrors[line.id]?.description}</p>
+                          ) : null}
+                        </div>
                         <Input
                           className="h-11 rounded-xl text-center"
                           value={line.quantity}
@@ -1144,12 +1259,21 @@ export function InvoicesWorkspace() {
                           onChange={(event) => updateDraftLine(line.id, "unit", event.target.value)}
                           placeholder="u, m, ml, m², kg…"
                         />
-                        <Input
-                          className="h-11 rounded-xl"
-                          value={line.unitPrice}
-                          onChange={(event) => updateDraftLine(line.id, "unitPrice", event.target.value)}
-                          placeholder="0"
-                        />
+                        <div className="grid gap-1">
+                          <Input
+                            className={cn(
+                              "h-11 rounded-xl",
+                              lineErrors[line.id]?.unitPrice && "border-rose-300 bg-rose-50 focus-visible:ring-rose-200",
+                            )}
+                            aria-invalid={Boolean(lineErrors[line.id]?.unitPrice)}
+                            value={line.unitPrice}
+                            onChange={(event) => updateDraftLine(line.id, "unitPrice", event.target.value)}
+                            placeholder="0"
+                          />
+                          {lineErrors[line.id]?.unitPrice ? (
+                            <p className="text-xs font-medium text-rose-600">{lineErrors[line.id]?.unitPrice}</p>
+                          ) : null}
+                        </div>
                         <div className="flex h-11 items-center rounded-xl border border-black/8 bg-white px-3 text-sm font-semibold text-slate-700">
                           {formatDraftTnd(lineTotal)}
                         </div>
@@ -1212,12 +1336,13 @@ export function InvoicesWorkspace() {
                 </div>
               ) : (
                 <div className="grid gap-4 md:grid-cols-2">
-                  <FormField label="Chantier">
+                  <FormField label="Chantier (optionnel)">
                     <select
                       value={invoiceForm.deliveryProject}
                       onChange={(event) => setInvoiceForm((current) => ({ ...current, deliveryProject: event.target.value }))}
                       className="flex h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
                     >
+                      <option value="">Sans chantier</option>
                       {projectTitles.length ? (
                         projectTitles.map((projectTitle) => <option key={projectTitle}>{projectTitle}</option>)
                       ) : (
@@ -1241,7 +1366,7 @@ export function InvoicesWorkspace() {
                       <option value="DELIVERED">Livré</option>
                     </select>
                   </FormField>
-                  <FormField label="Destination">
+                  <FormField label="Destination (optionnel)">
                     <Input
                       className="h-11 rounded-xl"
                       value={invoiceForm.deliveryDestination}
@@ -1249,7 +1374,7 @@ export function InvoicesWorkspace() {
                       placeholder="Chotrana 1, Ariana"
                     />
                   </FormField>
-                  <FormField label="Responsable">
+                  <FormField label="Responsable (optionnel)">
                     <Input
                       className="h-11 rounded-xl"
                       value={invoiceForm.deliveryResponsible}
@@ -1265,7 +1390,7 @@ export function InvoicesWorkspace() {
                       placeholder="Iveco Daily - 198 TN 445"
                     />
                   </FormField>
-                  <FormField label="Date et heure prévues">
+                  <FormField label="Date et heure prévues (optionnel)">
                     <Input
                       type="datetime-local"
                       className="h-11 rounded-xl"
@@ -1276,10 +1401,20 @@ export function InvoicesWorkspace() {
                   <div className="md:col-span-2">
                     <FormField label="Articles livrés / remarques">
                       <Textarea
+                        className={cn(
+                          fieldErrors.deliveryItemsNote && "border-rose-300 bg-rose-50 focus-visible:ring-rose-200",
+                        )}
+                        aria-invalid={Boolean(fieldErrors.deliveryItemsNote)}
                         value={invoiceForm.deliveryItemsNote}
-                        onChange={(event) => setInvoiceForm((current) => ({ ...current, deliveryItemsNote: event.target.value }))}
+                        onChange={(event) => {
+                          setInvoiceForm((current) => ({ ...current, deliveryItemsNote: event.target.value }));
+                          setFieldErrors((current) => ({ ...current, deliveryItemsNote: undefined }));
+                        }}
                         placeholder="Pergola main frame x1, support beams x4, fixing set x1 lot..."
                       />
+                      {fieldErrors.deliveryItemsNote ? (
+                        <p className="text-xs font-medium text-rose-600">{fieldErrors.deliveryItemsNote}</p>
+                      ) : null}
                     </FormField>
                   </div>
                 </div>
@@ -1322,7 +1457,7 @@ export function InvoicesWorkspace() {
                       variant="outline"
                       className="rounded-2xl"
                       onClick={() => void handleCreateDraft(true)}
-                      disabled={submitting || !clientOptions.length || !projectTitles.length}
+                      disabled={submitting || !clientOptions.length}
                     >
                       <Truck className="h-4 w-4" />
                       Créer la facture + le bon
@@ -1350,12 +1485,13 @@ export function InvoicesWorkspace() {
           ) : null}
 
           <div className="grid gap-4 md:grid-cols-2">
-            <FormField label="Chantier">
+            <FormField label="Chantier (optionnel)">
               <select
                 value={deliveryForm.project}
                 onChange={(event) => setDeliveryForm((current) => ({ ...current, project: event.target.value }))}
                 className="flex h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
               >
+                <option value="">Sans chantier</option>
                 {projectTitles.length ? (
                   projectTitles.map((projectTitle) => <option key={projectTitle}>{projectTitle}</option>)
                 ) : (
@@ -1379,14 +1515,14 @@ export function InvoicesWorkspace() {
                 <option value="DELIVERED">Livré</option>
               </select>
             </FormField>
-            <FormField label="Destination">
+            <FormField label="Destination (optionnel)">
               <Input
                 className="h-11 rounded-xl"
                 value={deliveryForm.destination}
                 onChange={(event) => setDeliveryForm((current) => ({ ...current, destination: event.target.value }))}
               />
             </FormField>
-            <FormField label="Responsable">
+            <FormField label="Responsable (optionnel)">
               <Input
                 className="h-11 rounded-xl"
                 value={deliveryForm.responsible}
@@ -1400,7 +1536,7 @@ export function InvoicesWorkspace() {
                 onChange={(event) => setDeliveryForm((current) => ({ ...current, vehicle: event.target.value }))}
               />
             </FormField>
-            <FormField label="Date et heure prévues">
+            <FormField label="Date et heure prévues (optionnel)">
               <Input
                 type="datetime-local"
                 className="h-11 rounded-xl"
@@ -1411,9 +1547,19 @@ export function InvoicesWorkspace() {
             <div className="md:col-span-2">
               <FormField label="Articles livrés / remarques">
                 <Textarea
+                  className={cn(
+                    deliveryFieldErrors.itemsNote && "border-rose-300 bg-rose-50 focus-visible:ring-rose-200",
+                  )}
+                  aria-invalid={Boolean(deliveryFieldErrors.itemsNote)}
                   value={deliveryForm.itemsNote}
-                  onChange={(event) => setDeliveryForm((current) => ({ ...current, itemsNote: event.target.value }))}
+                  onChange={(event) => {
+                    setDeliveryForm((current) => ({ ...current, itemsNote: event.target.value }));
+                    setDeliveryFieldErrors((current) => ({ ...current, itemsNote: undefined }));
+                  }}
                 />
+                {deliveryFieldErrors.itemsNote ? (
+                  <p className="text-xs font-medium text-rose-600">{deliveryFieldErrors.itemsNote}</p>
+                ) : null}
               </FormField>
             </div>
           </div>
@@ -1431,7 +1577,7 @@ export function InvoicesWorkspace() {
               type="button"
               className="rounded-2xl bg-[#2f4156] hover:bg-[#253548]"
               onClick={() => void handleCreateDeliveryNoteFromInvoice()}
-              disabled={deliverySubmitting || !projectTitles.length}
+              disabled={deliverySubmitting || !deliveryForm.client}
             >
               {deliverySubmitting ? "Enregistrement..." : "Créer un bon de livraison"}
             </Button>
@@ -1458,7 +1604,7 @@ function formatFormalDocumentDate(value: string) {
     return "01/04/2026";
   }
 
-  const nativeDate = value.includes("-") ? new Date(`${value}T00:00:00`) : new Date(value);
+  const nativeDate = value.includes("T") ? new Date(value) : value.includes("-") ? new Date(`${value}T00:00:00`) : new Date(value);
   if (Number.isNaN(nativeDate.getTime())) {
     return value;
   }
@@ -1472,7 +1618,7 @@ function formatFormalDocumentDate(value: string) {
 
 function buildInvoiceDueDate(issueDate: string) {
   if (!issueDate) {
-    return "2026-05-01";
+    return "";
   }
 
   const nativeDate = new Date(`${issueDate}T00:00:00`);
@@ -1585,7 +1731,7 @@ function formatQuantity(value: number, unit?: string) {
 }
 
 function createDefaultScheduledAt() {
-  return "2026-04-07T08:30";
+  return "";
 }
 
 function buildDeliveryItemsText(
@@ -1640,6 +1786,7 @@ function createDeliveryDraftFromInvoice(
   return {
     invoiceId: invoice.id,
     invoiceNumber: invoice.number,
+    client: invoice.client,
     project: fallbackProject,
     status: "PREPARED",
     destination: [invoice.clientDetails.address, invoice.clientDetails.city].filter((value) => value && value !== "-").join(", "),

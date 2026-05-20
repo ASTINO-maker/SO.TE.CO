@@ -47,6 +47,7 @@ interface DeliveryNoteRecord {
 }
 
 interface DeliveryNoteFormState {
+  client: string;
   project: string;
   status: "PREPARED" | "IN_TRANSIT" | "DELIVERED";
   destination: string;
@@ -60,6 +61,12 @@ interface ProjectOption {
   id: string;
   title: string;
 }
+
+interface PersistedClientOption {
+  name: string;
+}
+
+type DeliveryFormErrors = Partial<Record<"client" | "scheduledAt" | "itemsNote", string>>;
 
 interface DocumentSettings {
   headerCompanyName: string;
@@ -83,14 +90,15 @@ function escapeHtml(value: string) {
     .replaceAll("'", "&#39;");
 }
 
-function createDefaultDeliveryForm(project = ""): DeliveryNoteFormState {
+function createDefaultDeliveryForm(project = "", client = ""): DeliveryNoteFormState {
   return {
+    client,
     project,
     status: "PREPARED",
     destination: "",
     responsible: "",
     vehicle: "",
-    scheduledAt: "2026-04-02T08:30",
+    scheduledAt: "",
     itemsNote: "",
   };
 }
@@ -315,6 +323,7 @@ export function DeliveryNotesWorkspace() {
   const actionHref = `${baseHref}?action=`;
   const [notes, setNotes] = useState<DeliveryNoteRecord[]>([]);
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
+  const [clients, setClients] = useState<PersistedClientOption[]>([]);
   const [documentSettings, setDocumentSettings] = useState<DocumentSettings>({
     headerCompanyName: "",
     headerCompanySubtitle: "",
@@ -338,6 +347,7 @@ export function DeliveryNotesWorkspace() {
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState("");
   const [formError, setFormError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<DeliveryFormErrors>({});
   const [submitting, setSubmitting] = useState(false);
   const [deliveryForm, setDeliveryForm] = useState<DeliveryNoteFormState>(createDefaultDeliveryForm());
   const deliveryDialogInitialRef = useRef<string | null>(null);
@@ -348,7 +358,7 @@ export function DeliveryNotesWorkspace() {
     setPageError("");
 
     try {
-      const [notesResponse, projectsResponse, settingsResponse] = await Promise.all([
+      const [notesResponse, projectsResponse, clientsResponse, settingsResponse] = await Promise.all([
         apiClient.get<PaginatedResponse<DeliveryNoteRecord>>("/sales/delivery-notes", {
           page: 1,
           pageSize: 100,
@@ -357,11 +367,16 @@ export function DeliveryNotesWorkspace() {
           page: 1,
           pageSize: 100,
         }),
+        apiClient.get<PaginatedResponse<PersistedClientOption>>("/crm/clients", {
+          page: 1,
+          pageSize: 100,
+        }),
         apiClient.get<DocumentSettings>("/settings/documents"),
       ]);
 
       setNotes(notesResponse.data);
       setDocumentSettings(settingsResponse);
+      setClients(clientsResponse.data);
       setProjectOptions(
         projectsResponse.data.map((project) => ({
           id: project.id,
@@ -370,7 +385,10 @@ export function DeliveryNotesWorkspace() {
       );
       setSelectedId((current) => current || notesResponse.data[0]?.id || "");
       const firstProjectTitle = projectsResponse.data[0]?.title ?? "";
-      setDeliveryForm((current) => (current.project ? current : createDefaultDeliveryForm(firstProjectTitle)));
+      const firstClientName = clientsResponse.data[0]?.name ?? "";
+      setDeliveryForm((current) =>
+        current.project || current.client ? current : createDefaultDeliveryForm(firstProjectTitle, firstClientName),
+      );
     } catch (error) {
       setPageError(getApiErrorMessage(error, "Impossible de charger les bons de livraison."));
     } finally {
@@ -381,6 +399,10 @@ export function DeliveryNotesWorkspace() {
   useEffect(() => {
     void loadData();
   }, []);
+
+  const clientOptions = useMemo(() => {
+    return clients.map((client) => client.name).filter(Boolean);
+  }, [clients]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -441,9 +463,10 @@ export function DeliveryNotesWorkspace() {
   }
 
   function openNewDeliveryDialog() {
-    const nextForm = createDefaultDeliveryForm(projectOptions[0]?.title ?? "");
+    const nextForm = createDefaultDeliveryForm(projectOptions[0]?.title ?? "", clientOptions[0] ?? "");
     setEditingNoteId(null);
     setFormError("");
+    setFieldErrors({});
     setSubmitting(false);
     setDeliveryForm(nextForm);
     deliveryDialogInitialRef.current = serializeDeliveryDialogState(nextForm, null);
@@ -452,10 +475,11 @@ export function DeliveryNotesWorkspace() {
   }
 
   function closeDeliveryDialog() {
-    const nextForm = createDefaultDeliveryForm(projectOptions[0]?.title ?? "");
+    const nextForm = createDefaultDeliveryForm(projectOptions[0]?.title ?? "", clientOptions[0] ?? "");
     setShowNewDialog(false);
     setEditingNoteId(null);
     setFormError("");
+    setFieldErrors({});
     setSubmitting(false);
     setDeliveryForm(nextForm);
     deliveryDialogInitialRef.current = null;
@@ -466,16 +490,18 @@ export function DeliveryNotesWorkspace() {
 
   function openEditNoteDialog(note: DeliveryNoteRecord) {
     const nextForm: DeliveryNoteFormState = {
+      client: note.clientDetails.client,
       project: note.project,
       status: note.status,
       destination: note.destination,
       responsible: note.responsible,
       vehicle: note.vehicle === "-" ? "" : note.vehicle,
-      scheduledAt: toDateTimeInputValue(note.scheduledAt, "2026-04-02T08:30"),
+      scheduledAt: toDateTimeInputValue(note.scheduledAt, ""),
       itemsNote: note.items.map((item) => `${item.label} x${item.quantity}`).join("\n"),
     };
     setEditingNoteId(note.id);
     setFormError("");
+    setFieldErrors({});
     setSubmitting(false);
     setDeliveryForm(nextForm);
     deliveryDialogInitialRef.current = serializeDeliveryDialogState(nextForm, note.id);
@@ -590,18 +616,44 @@ export function DeliveryNotesWorkspace() {
 
   async function handleCreateNote() {
     const currentEditingNoteId = editingNoteId;
+    const clientName = deliveryForm.client.trim();
+    const itemsNote = deliveryForm.itemsNote.trim();
+    const scheduledAt = deliveryForm.scheduledAt.trim();
+    const scheduledAtDate = scheduledAt ? new Date(scheduledAt) : null;
+    const nextFieldErrors: DeliveryFormErrors = {};
+
+    if (!clientName) {
+      nextFieldErrors.client = "Sélectionnez un client avant de créer le bon.";
+    }
+
+    if (scheduledAtDate && Number.isNaN(scheduledAtDate.getTime())) {
+      nextFieldErrors.scheduledAt = "Date prévue invalide.";
+    }
+
+    if (!itemsNote) {
+      nextFieldErrors.itemsNote = "Ajoutez au moins un article livré.";
+    }
+
+    if (Object.keys(nextFieldErrors).length) {
+      setFieldErrors(nextFieldErrors);
+      setFormError("");
+      return;
+    }
+
     setSubmitting(true);
     setFormError("");
+    setFieldErrors({});
 
     try {
       const payload = {
-        project: deliveryForm.project.trim(),
+        client: clientName,
+        ...(deliveryForm.project.trim() ? { project: deliveryForm.project.trim() } : {}),
         status: deliveryForm.status,
-        destination: deliveryForm.destination.trim(),
-        responsible: deliveryForm.responsible.trim(),
-        vehicle: deliveryForm.vehicle.trim(),
-        scheduledAt: new Date(deliveryForm.scheduledAt).toISOString(),
-        itemsNote: deliveryForm.itemsNote.trim(),
+        ...(deliveryForm.destination.trim() ? { destination: deliveryForm.destination.trim() } : {}),
+        ...(deliveryForm.responsible.trim() ? { responsible: deliveryForm.responsible.trim() } : {}),
+        ...(deliveryForm.vehicle.trim() ? { vehicle: deliveryForm.vehicle.trim() } : {}),
+        ...(scheduledAtDate ? { scheduledAt: scheduledAtDate.toISOString() } : {}),
+        itemsNote,
       };
       const created = currentEditingNoteId
         ? await apiClient.patch<DeliveryNoteRecord>(`/sales/delivery-notes/${currentEditingNoteId}`, payload)
@@ -628,9 +680,10 @@ export function DeliveryNotesWorkspace() {
 
   useEffect(() => {
     if (isNewAction && !showNewDialog) {
-      const nextForm = createDefaultDeliveryForm(projectOptions[0]?.title ?? "");
+      const nextForm = createDefaultDeliveryForm(projectOptions[0]?.title ?? "", clientOptions[0] ?? "");
       setEditingNoteId(null);
       setFormError("");
+      setFieldErrors({});
       setSubmitting(false);
       setDeliveryForm(nextForm);
       deliveryDialogInitialRef.current = serializeDeliveryDialogState(nextForm, null);
@@ -642,7 +695,7 @@ export function DeliveryNotesWorkspace() {
       setShowNewDialog(false);
       deliveryDialogInitialRef.current = null;
     }
-  }, [isNewAction, showNewDialog, editingNoteId, projectOptions]);
+  }, [isNewAction, showNewDialog, editingNoteId, projectOptions, clientOptions]);
 
   useEffect(() => {
     setSelectedIds((current) => current.filter((id) => notes.some((note) => note.id === id)));
@@ -881,10 +934,11 @@ export function DeliveryNotesWorkspace() {
                   Préparez un bon clair pour le chantier: destination, responsable, véhicule, horaire prévu et liste des éléments livrés.
                 </p>
               </div>
-              <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[420px]">
-                <InfoBox label="Chantier" value={deliveryForm.project || "Aucun chantier"} />
+              <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[520px] xl:grid-cols-4">
+                <InfoBox label="Client" value={deliveryForm.client || "Aucun client"} />
+                <InfoBox label="Chantier" value={deliveryForm.project || "À définir"} />
                 <InfoBox label="Statut" value={formatDeliveryStatusLabel(deliveryForm.status)} />
-                <InfoBox label="Prévu le" value={formatDeliveryScheduleLabel(deliveryForm.scheduledAt)} />
+                <InfoBox label="Prévu le" value={deliveryForm.scheduledAt ? formatDeliveryScheduleLabel(deliveryForm.scheduledAt) : "À définir"} />
               </div>
             </div>
           </section>
@@ -895,12 +949,34 @@ export function DeliveryNotesWorkspace() {
               <p className="mt-1 text-sm text-slate-500">Les informations de base pour savoir où va le bon, qui le gère et comment il part.</p>
             </div>
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <FormField label="Chantier">
+              <FormField label="Client">
+                <select
+                  value={deliveryForm.client}
+                  aria-invalid={Boolean(fieldErrors.client)}
+                  onChange={(event) => {
+                    setDeliveryForm((current) => ({ ...current, client: event.target.value }));
+                    setFieldErrors((current) => ({ ...current, client: undefined }));
+                  }}
+                  className={cn(
+                    "flex h-11 w-full rounded-xl border border-input bg-background px-3 text-sm",
+                    fieldErrors.client && "border-rose-300 bg-rose-50 focus-visible:ring-rose-200",
+                  )}
+                >
+                  {clientOptions.length ? (
+                    clientOptions.map((clientName) => <option key={clientName}>{clientName}</option>)
+                  ) : (
+                    <option value="">Aucun client disponible</option>
+                  )}
+                </select>
+                {fieldErrors.client ? <p className="text-xs font-medium text-rose-600">{fieldErrors.client}</p> : null}
+              </FormField>
+              <FormField label="Chantier (optionnel)">
                 <select
                   value={deliveryForm.project}
                   onChange={(event) => setDeliveryForm((current) => ({ ...current, project: event.target.value }))}
                   className="flex h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
                 >
+                  <option value="">Sans chantier</option>
                   {projectOptions.length ? (
                     projectOptions.map((project) => (
                       <option key={project.id} value={project.title}>
@@ -928,15 +1004,23 @@ export function DeliveryNotesWorkspace() {
                   <option value="DELIVERED">Livré</option>
                 </select>
               </FormField>
-              <FormField label="Date et heure prévues">
+              <FormField label="Date et heure prévues (optionnel)">
                 <Input
                   type="datetime-local"
-                  className="h-11 rounded-xl"
+                  className={cn(
+                    "h-11 rounded-xl",
+                    fieldErrors.scheduledAt && "border-rose-300 bg-rose-50 focus-visible:ring-rose-200",
+                  )}
+                  aria-invalid={Boolean(fieldErrors.scheduledAt)}
                   value={deliveryForm.scheduledAt}
-                  onChange={(event) => setDeliveryForm((current) => ({ ...current, scheduledAt: event.target.value }))}
+                  onChange={(event) => {
+                    setDeliveryForm((current) => ({ ...current, scheduledAt: event.target.value }));
+                    setFieldErrors((current) => ({ ...current, scheduledAt: undefined }));
+                  }}
                 />
+                {fieldErrors.scheduledAt ? <p className="text-xs font-medium text-rose-600">{fieldErrors.scheduledAt}</p> : null}
               </FormField>
-              <FormField label="Destination chantier">
+              <FormField label="Destination chantier (optionnel)">
                 <Input
                   className="h-11 rounded-xl"
                   value={deliveryForm.destination}
@@ -944,7 +1028,7 @@ export function DeliveryNotesWorkspace() {
                   placeholder="Chotrana 1, Ariana"
                 />
               </FormField>
-              <FormField label="Responsable sur place">
+              <FormField label="Responsable sur place (optionnel)">
                 <Input
                   className="h-11 rounded-xl"
                   value={deliveryForm.responsible}
@@ -970,10 +1054,18 @@ export function DeliveryNotesWorkspace() {
             </div>
             <FormField label="Liste de livraison">
               <Textarea
+                className={cn(
+                  fieldErrors.itemsNote && "border-rose-300 bg-rose-50 focus-visible:ring-rose-200",
+                )}
+                aria-invalid={Boolean(fieldErrors.itemsNote)}
                 value={deliveryForm.itemsNote}
-                onChange={(event) => setDeliveryForm((current) => ({ ...current, itemsNote: event.target.value }))}
+                onChange={(event) => {
+                  setDeliveryForm((current) => ({ ...current, itemsNote: event.target.value }));
+                  setFieldErrors((current) => ({ ...current, itemsNote: undefined }));
+                }}
                 placeholder={"Pergola main frame x1\nSupport beams x4\nFixing set x1 lot"}
               />
+              {fieldErrors.itemsNote ? <p className="text-xs font-medium text-rose-600">{fieldErrors.itemsNote}</p> : null}
             </FormField>
           </section>
 
@@ -995,7 +1087,7 @@ export function DeliveryNotesWorkspace() {
                   type="button"
                   className="rounded-2xl bg-[#2f4156] hover:bg-[#253548]"
                   onClick={() => void handleCreateNote()}
-                  disabled={submitting || !projectOptions.length}
+                  disabled={submitting || !clientOptions.length}
                 >
                   {submitting ? "Enregistrement..." : isEditingNote ? "Enregistrer les modifications" : "Créer le bon"}
                 </Button>

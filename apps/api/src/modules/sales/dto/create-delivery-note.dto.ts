@@ -1,28 +1,38 @@
 import { DeliveryStatus } from "@sotec/database";
-import { IsDateString, IsEnum, IsString, MaxLength } from "class-validator";
+import { IsDateString, IsEnum, IsOptional, IsString, MaxLength } from "class-validator";
 
 export class CreateDeliveryNoteDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  client?: string;
+
+  @IsOptional()
   @IsString()
   @MaxLength(200)
-  project!: string;
+  project?: string;
 
   @IsEnum(DeliveryStatus)
   status!: DeliveryStatus;
 
+  @IsOptional()
   @IsString()
   @MaxLength(220)
-  destination!: string;
+  destination?: string;
 
+  @IsOptional()
   @IsString()
   @MaxLength(120)
-  responsible!: string;
+  responsible?: string;
 
+  @IsOptional()
   @IsString()
   @MaxLength(160)
-  vehicle!: string;
+  vehicle?: string;
 
+  @IsOptional()
   @IsDateString()
-  scheduledAt!: string;
+  scheduledAt?: string;
 
   @IsString()
   itemsNote!: string;

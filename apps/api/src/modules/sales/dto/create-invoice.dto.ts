@@ -41,11 +41,13 @@ export class CreateInvoiceDto {
   @MaxLength(160)
   client!: string;
 
+  @IsOptional()
   @IsDateString()
-  issueDate!: string;
+  issueDate?: string;
 
+  @IsOptional()
   @IsDateString()
-  dueDate!: string;
+  dueDate?: string;
 
   @IsString()
   paymentTerms!: string;
