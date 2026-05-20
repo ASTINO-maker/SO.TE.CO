@@ -1,0 +1,18 @@
+{
+  "extends": "../../packages/tsconfig/base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "outDir": "dist",
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@sotec/database": ["../../packages/database/src"],
+      "@sotec/contracts": ["../../packages/contracts/src"],
+      "@sotec/config": ["../../packages/config/src"]
+    }
+  },
+  "include": ["src/**/*"]
+}

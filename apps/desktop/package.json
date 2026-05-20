@@ -1,0 +1,69 @@
+{
+  "name": "@sotec/desktop",
+  "private": true,
+  "version": "0.2.0",
+  "description": "SO.TE.CO ERP - desktop launcher (Electron) with bundled PostgreSQL",
+  "author": "SO.TE.CO",
+  "main": "src/main.js",
+  "scripts": {
+    "dev": "electron .",
+    "prepare:assets": "node scripts/prepare-assets.js",
+    "prepare:postgres": "node scripts/download-postgres.js",
+    "prepare:runtime": "node scripts/prepare-runtime.js",
+    "dist:win": "pnpm prepare:assets && pnpm prepare:runtime && electron-builder --win nsis --publish never",
+    "dist:portable": "pnpm prepare:assets && pnpm prepare:runtime && electron-builder --win portable --publish never"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3",
+    "png-to-ico": "^2.1.8"
+  },
+  "build": {
+    "appId": "com.sotec.erp.desktop",
+    "productName": "SO.TE.CO ERP",
+    "electronVersion": "31.7.7",
+    "compression": "maximum",
+    "directories": {
+      "output": "../../installer-to-deliver",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "extraResources": [
+      {
+        "from": ".runtime-bundle",
+        "to": "runtime"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "SO.TE.CO-ERP-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "shortcutName": "SO.TE.CO ERP",
+      "deleteAppDataOnUninstall": false,
+      "uninstallDisplayName": "SO.TE.CO ERP"
+    }
+  }
+}

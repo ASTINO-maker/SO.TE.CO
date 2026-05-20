@@ -1,0 +1,95 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 42 33% 95%;
+    --foreground: 215 28% 16%;
+    --card: 0 0% 100%;
+    --card-foreground: 215 28% 16%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 28% 16%;
+    --primary: 21 70% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 42 28% 92%;
+    --secondary-foreground: 215 28% 16%;
+    --muted: 40 22% 92%;
+    --muted-foreground: 215 12% 42%;
+    --accent: 205 32% 93%;
+    --accent-foreground: 215 28% 16%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 35 22% 84%;
+    --input: 35 22% 84%;
+    --ring: 21 70% 45%;
+    --chart-1: 21 70% 45%;
+    --chart-2: 154 50% 36%;
+    --chart-3: 41 89% 54%;
+    --chart-4: 210 52% 44%;
+    --chart-5: 348 75% 57%;
+    --radius: 1rem;
+    --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+    --font-body: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  }
+
+  html[data-theme="dark"] {
+    --background: 220 35% 11%;
+    --foreground: 210 20% 94%;
+    --card: 218 32% 14%;
+    --card-foreground: 210 20% 94%;
+    --popover: 218 32% 14%;
+    --popover-foreground: 210 20% 94%;
+    --primary: 11 95% 64%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 218 20% 22%;
+    --secondary-foreground: 210 20% 94%;
+    --muted: 218 20% 18%;
+    --muted-foreground: 215 16% 70%;
+    --accent: 216 24% 20%;
+    --accent-foreground: 210 20% 94%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 218 17% 24%;
+    --input: 218 17% 24%;
+    --ring: 11 95% 64%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body {
+    @apply min-h-full bg-background text-foreground antialiased;
+  }
+
+  body {
+    font-family: var(--font-body);
+    background:
+      radial-gradient(circle at top left, rgba(196, 91, 45, 0.11), transparent 24%),
+      radial-gradient(circle at right 12% top 8%, rgba(47, 65, 86, 0.08), transparent 26%),
+      linear-gradient(180deg, rgba(250, 247, 241, 1) 0%, rgba(242, 236, 226, 1) 100%);
+  }
+
+  html[data-theme="dark"] body {
+    background:
+      radial-gradient(circle at top left, rgba(255, 107, 91, 0.08), transparent 22%),
+      linear-gradient(180deg, rgba(16, 23, 36, 1) 0%, rgba(12, 18, 28, 1) 100%);
+  }
+
+  a {
+    @apply text-inherit no-underline;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+  }
+
+  ::selection {
+    background: rgba(196, 91, 45, 0.18);
+  }
+}

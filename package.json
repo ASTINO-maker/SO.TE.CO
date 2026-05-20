@@ -1,0 +1,33 @@
+{
+  "name": "sotec-erp-crm",
+  "private": true,
+  "version": "0.1.1",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "build:installer": "pnpm --filter @sotec/database build && pnpm --filter @sotec/api build && pnpm --filter @sotec/web build && pnpm --filter @sotec/desktop dist:win",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "typecheck": "turbo typecheck",
+    "db:generate": "pnpm --filter @sotec/database db:generate",
+    "db:migrate": "pnpm --filter @sotec/database db:migrate",
+    "db:deploy": "pnpm --filter @sotec/database db:deploy",
+    "db:studio": "pnpm --filter @sotec/database db:studio",
+    "web:up": "docker compose --env-file .env.web -f docker-compose.web.yml up -d --build",
+    "web:down": "docker compose --env-file .env.web -f docker-compose.web.yml down",
+    "web:logs": "docker compose --env-file .env.web -f docker-compose.web.yml logs -f",
+    "web:ps": "docker compose --env-file .env.web -f docker-compose.web.yml ps",
+    "web:backup": "scripts/production/backup-web.sh"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.4.3",
+    "@electric-sql/pglite-socket": "^0.1.3",
+    "turbo": "^2.0.0",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.0.0",
+    "prisma": "^6.0.0"
+  }
+}
