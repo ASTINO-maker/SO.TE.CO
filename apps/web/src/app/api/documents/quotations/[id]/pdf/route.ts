@@ -113,7 +113,7 @@ async function getDocumentSettings(tenantId: string) {
   };
 }
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
 
   try {
@@ -169,6 +169,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         total: formatMoney(item.lineTotal),
       })),
       settings,
+      assetBaseUrl: new URL(request.url).origin,
     });
 
     const pdf = await renderPdfBuffer(`${quotation.number}.pdf`, markup);

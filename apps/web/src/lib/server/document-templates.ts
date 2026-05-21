@@ -30,8 +30,8 @@ function formatTnd(value: number | string) {
   return formatTndShared(toNumericValue(value));
 }
 
-function formatInvoiceTnd(value: number | string) {
-  return formatTndShared(toNumericValue(value));
+function formatInvoiceTnd(value: number | string, options: { decimals?: number } = {}) {
+  return formatTndShared(toNumericValue(value), options);
 }
 
 function toNumericValue(value: number | string) {
@@ -67,12 +67,59 @@ function round3(value: number) {
   return Math.round(value * 1000) / 1000;
 }
 
-function getBaseUrl() {
-  return process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+type TvaBreakdownRow = { rate: number; baseHt: number; tva: number };
+
+function computeTvaBreakdown(
+  lines: Array<{ taxRate?: number | string; subtotalHt?: number | string; total?: string }>,
+  totalBaseFallback: number,
+  fodecValue: number,
+): { rows: TvaBreakdownRow[]; totalTva: number; totalBase: number } {
+  const grouped = new Map<number, number>();
+  let totalBase = 0;
+
+  for (const line of lines) {
+    const rawRate = line.taxRate;
+    if (rawRate === undefined || rawRate === null || rawRate === "") {
+      continue;
+    }
+    const rate = round3(toNumericValue(rawRate));
+    const subtotal = round3(toNumericValue(line.subtotalHt ?? 0));
+    grouped.set(rate, round3((grouped.get(rate) ?? 0) + subtotal));
+    totalBase = round3(totalBase + subtotal);
+  }
+
+  if (grouped.size === 0) {
+    return { rows: [], totalTva: 0, totalBase: 0 };
+  }
+
+  const fodecShareEnabled = totalBase > 0 && fodecValue > 0;
+  const rows: TvaBreakdownRow[] = [];
+  let totalTva = 0;
+
+  for (const [rate, baseLines] of [...grouped.entries()].sort((a, b) => a[0] - b[0])) {
+    const fodecShare = fodecShareEnabled ? round3((baseLines / totalBase) * fodecValue) : 0;
+    const baseWithFodec = round3(baseLines + fodecShare);
+    const tva = round3((baseWithFodec * rate) / 100);
+    totalTva = round3(totalTva + tva);
+    rows.push({ rate, baseHt: baseWithFodec, tva });
+  }
+
+  return { rows, totalTva, totalBase: round3(totalBase + fodecValue) };
 }
 
-function getBrandLogoUrl() {
-  return `${getBaseUrl()}/brand/sotec-logo.png`;
+function getBaseUrl(assetBaseUrl?: string) {
+  const explicitBaseUrl =
+    assetBaseUrl ??
+    (typeof window !== "undefined" ? window.location.origin : undefined) ??
+    process.env.APP_BASE_URL ??
+    process.env.NEXT_PUBLIC_APP_URL ??
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : undefined);
+
+  return (explicitBaseUrl || "http://localhost:3000").replace(/\/+$/u, "");
+}
+
+function getBrandLogoUrl(assetBaseUrl?: string) {
+  return `${getBaseUrl(assetBaseUrl)}/brand/sotec-logo.png`;
 }
 
 function baseDocumentCss() {
@@ -148,6 +195,14 @@ function baseDocumentCss() {
       .invoice-pro-table thead th:nth-child(2),
       .invoice-pro-table thead th:nth-child(3),
       .invoice-pro-table thead th:nth-child(4) { font-variant-numeric: tabular-nums; }
+      .invoice-pro-tva-recap { margin-top: 10px; }
+      .invoice-pro-tva-recap .section-title { font-size: 7.8px; letter-spacing: 0.16em; color: #64748b; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; }
+      .invoice-tva-table { width: 60%; border-collapse: collapse; font-size: 9.6px; }
+      .invoice-tva-table thead th { background: #eef2f6; border-top: 1px solid #d7dde5; border-bottom: 1px solid #d7dde5; padding: 5px 8px; font-size: 8.4px; letter-spacing: 0.1em; text-transform: uppercase; color: #334155; text-align: right; }
+      .invoice-tva-table thead th:first-child { text-align: left; }
+      .invoice-tva-table tbody td { padding: 4px 8px; border-bottom: 1px solid #e5e7eb; text-align: right; font-variant-numeric: tabular-nums; }
+      .invoice-tva-table tbody td:first-child { text-align: left; }
+      .invoice-tva-table tr.invoice-tva-total td { font-weight: 700; background: #f8fafc; }
       .invoice-pro-summary { margin-top: 10px; display: grid; justify-content: end; }
       .invoice-pro-totals { border: 1px solid #0f172a; border-radius: 12px; padding: 8px 10px; background: #ffffff; }
       .invoice-pro-total-row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px solid #e2e8f0; font-size: 9.6px; }
@@ -337,7 +392,14 @@ export function renderInvoiceMarkupFromRecord(invoice: {
     addressLine1?: string | null;
     city?: string | null;
   };
-  lines: Array<{ label: string; quantity: string; unitPrice: string; total: string }>;
+  lines: Array<{
+    label: string;
+    quantity: string;
+    unitPrice: string;
+    total: string;
+    taxRate?: number | string;
+    subtotalHt?: number | string;
+  }>;
   settings?: {
     headerCompanyName?: string | null;
     headerCompanySubtitle?: string | null;
@@ -354,22 +416,27 @@ export function renderInvoiceMarkupFromRecord(invoice: {
     bankBic?: string | null;
     bankAccountHolder?: string | null;
   };
+  assetBaseUrl?: string;
 }) {
-  const logoUrl = getBrandLogoUrl();
+  const logoUrl = getBrandLogoUrl(invoice.assetBaseUrl);
   const issueDate = formatFormalDate(invoice.issueDate);
   const status = escapeHtml(mapInvoiceStatus(invoice.status));
   const scope = escapeHtml(invoice.scope || "Document commercial");
   const totalBaseValue = round3(toNumericValue(invoice.totalAmount));
   const fodecValue = round3(totalBaseValue * 0.01);
   const totalHtValue = round3(totalBaseValue + fodecValue);
-  const tvaValue = round3(totalHtValue * 0.19);
+
+  const tvaBreakdown = computeTvaBreakdown(invoice.lines, totalBaseValue, fodecValue);
+  const tvaValue = tvaBreakdown.totalTva > 0
+    ? tvaBreakdown.totalTva
+    : round3(totalHtValue * 0.19);
   const timberValue = 1;
   const totalTtcValue = round3(totalHtValue + tvaValue + timberValue);
   const totalAmount = formatInvoiceTnd(totalBaseValue);
   const fodecAmount = formatInvoiceTnd(fodecValue);
   const totalHtAmount = formatInvoiceTnd(totalHtValue);
   const tvaAmount = formatInvoiceTnd(tvaValue);
-  const timberAmount = formatInvoiceTnd(timberValue);
+  const timberAmount = formatInvoiceTnd(timberValue, { decimals: 0 });
   const totalTtcAmount = formatInvoiceTnd(totalTtcValue);
   const paidAmount = formatInvoiceTnd(invoice.paidAmount);
   const balanceDue = formatInvoiceTnd(invoice.balanceDue);
@@ -517,12 +584,47 @@ export function renderInvoiceMarkupFromRecord(invoice: {
         </tbody>
       </table>
 
+      ${
+        tvaBreakdown.rows.length > 0
+          ? `
+      <div class="invoice-pro-tva-recap">
+        <div class="section-title">Récapitulatif TVA</div>
+        <table class="invoice-tva-table">
+          <thead>
+            <tr>
+              <th>Base HT</th>
+              <th>Taux TVA</th>
+              <th>Montant TVA</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tvaBreakdown.rows
+              .map(
+                (row) => `
+                  <tr>
+                    <td>${formatInvoiceTnd(row.baseHt)}</td>
+                    <td>${row.rate.toLocaleString("fr-FR", { maximumFractionDigits: 2 })}%</td>
+                    <td>${formatInvoiceTnd(row.tva)}</td>
+                  </tr>`,
+              )
+              .join("")}
+            <tr class="invoice-tva-total">
+              <td>${formatInvoiceTnd(tvaBreakdown.totalBase)}</td>
+              <td>Total</td>
+              <td>${formatInvoiceTnd(tvaBreakdown.totalTva)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>`
+          : ""
+      }
+
       <div class="invoice-pro-summary">
         <div class="invoice-pro-totals">
           <div class="invoice-pro-total-row"><span>Sous-total</span><strong>${totalAmount}</strong></div>
           <div class="invoice-pro-total-row"><span>Fodec 1%</span><strong>${fodecAmount}</strong></div>
           <div class="invoice-pro-total-row"><span>Total HT</span><strong>${totalHtAmount}</strong></div>
-          <div class="invoice-pro-total-row"><span>TVA 19%</span><strong>${tvaAmount}</strong></div>
+          <div class="invoice-pro-total-row"><span>${tvaBreakdown.rows.length > 1 ? "TVA (voir détail)" : "TVA"}</span><strong>${tvaAmount}</strong></div>
           <div class="invoice-pro-total-row"><span>Timbre 1 DT</span><strong>${timberAmount}</strong></div>
           <div class="invoice-pro-total-row grand"><span>Total TTC</span><strong>${totalTtcAmount}</strong></div>
         </div>
@@ -603,8 +705,9 @@ export function renderQuotationMarkupFromRecord(quotation: {
     headerArabicCompanyName?: string | null;
     headerArabicAddressLine?: string | null;
   };
+  assetBaseUrl?: string;
 }) {
-  const logoUrl = getBrandLogoUrl();
+  const logoUrl = getBrandLogoUrl(quotation.assetBaseUrl);
   const issueDate = formatFormalDate(quotation.issueDate);
   const scope = escapeHtml(quotation.title || "Devis commercial");
   const requestFor = escapeHtml(quotation.requestFor?.trim() || quotation.title || "le projet concerné");
@@ -619,7 +722,7 @@ export function renderQuotationMarkupFromRecord(quotation: {
   const fodecAmount = formatInvoiceTnd(fodecValue);
   const totalHtAmount = formatInvoiceTnd(totalHtValue);
   const tvaAmount = formatInvoiceTnd(tvaValue);
-  const timberAmount = formatInvoiceTnd(timberValue);
+  const timberAmount = formatInvoiceTnd(timberValue, { decimals: 0 });
   const totalTtcAmount = formatInvoiceTnd(totalTtcValue);
   const headerCompanyName = escapeHtml(quotation.settings?.headerCompanyName?.trim() || "SO.TE.CO");
   const headerCompanySubtitle = escapeHtml(

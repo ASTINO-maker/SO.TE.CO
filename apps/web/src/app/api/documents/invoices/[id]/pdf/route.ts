@@ -140,7 +140,7 @@ async function getDocumentSettings(tenantId: string) {
   };
 }
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
 
   try {
@@ -191,8 +191,11 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         }),
         unitPrice: formatMoney(item.unitPrice),
         total: formatMoney(item.lineTotal),
+        taxRate: decimalToNumber(item.taxRate),
+        subtotalHt: decimalToNumber(item.lineSubtotal),
       })),
       settings,
+      assetBaseUrl: new URL(request.url).origin,
     });
 
     const pdf = await renderPdfBuffer(`${invoice.number}.pdf`, markup);
