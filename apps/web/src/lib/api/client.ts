@@ -40,8 +40,12 @@ type AuthUser = {
   requiresPasswordChange: boolean;
 };
 
+type AuthPayload = ApiSession & {
+  user: AuthUser;
+};
+
 let inMemorySession: ApiSession | null = null;
-let sessionPromise: Promise<ApiSession> | null = null;
+let sessionPromise: Promise<AuthPayload> | null = null;
 
 function toQueryString(query?: ListQuery) {
   if (!query) {
@@ -108,7 +112,7 @@ function storeSession(session: ApiSession | null) {
 async function authRequest(
   path: string,
   body: Record<string, unknown>,
-): Promise<ApiSession> {
+): Promise<AuthPayload> {
   const response = await fetch(`${API_URL}${path}`, {
     method: "POST",
     headers: {
@@ -125,11 +129,13 @@ async function authRequest(
   const payload = (await response.json()) as {
     accessToken: string;
     refreshToken: string;
+    user: AuthUser;
   };
 
   return {
     accessToken: payload.accessToken,
     refreshToken: payload.refreshToken,
+    user: payload.user,
   };
 }
 
@@ -167,7 +173,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (response.status === 401) {
     try {
       const refreshed = await refreshSession(session.refreshToken);
-      storeSession(refreshed);
+      storeSession({
+        accessToken: refreshed.accessToken,
+        refreshToken: refreshed.refreshToken,
+      });
       response = await attempt(refreshed.accessToken);
     } catch {
       storeSession(null);
@@ -214,9 +223,12 @@ export const apiClient = {
       });
     }
 
-    const session = await sessionPromise;
-    storeSession(session);
-    return apiClient.me();
+    const payload = await sessionPromise;
+    storeSession({
+      accessToken: payload.accessToken,
+      refreshToken: payload.refreshToken,
+    });
+    return payload.user;
   },
   me: () => request<AuthUser>("/auth/me"),
   changePassword: (currentPassword: string, newPassword: string) =>

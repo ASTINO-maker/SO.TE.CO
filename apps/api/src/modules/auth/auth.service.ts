@@ -1,10 +1,11 @@
 import {
   Injectable,
+  Logger,
   UnauthorizedException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
-import { roleTemplates } from "@sotec/config";
+import { permissionCatalog, roleTemplates } from "@sotec/config";
 import {
   AuditAction,
   type Prisma,
@@ -29,21 +30,15 @@ const ACCESS_TOKEN_TTL = "15m";
 const REFRESH_TOKEN_TTL_DAYS = 30;
 
 const roleScopeMap = new Map(roleTemplates.map((role) => [role.code, role.defaultScope]));
+const rolePermissionCodesMap = new Map(roleTemplates.map((role) => [role.code, role.permissionCodes]));
+const allPermissionCodes = permissionCatalog.map((permission) => permission.code);
 
 type UserWithAccess = Prisma.UserGetPayload<{
   include: {
     branch: true;
     userRoles: {
       include: {
-        role: {
-          include: {
-            rolePermissions: {
-              include: {
-                permission: true;
-              };
-            };
-          };
-        };
+        role: true;
       };
     };
   };
@@ -51,6 +46,8 @@ type UserWithAccess = Prisma.UserGetPayload<{
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
@@ -64,32 +61,13 @@ export class AuthService {
     const user = await this.findUserByEmail(payload.email);
     this.ensureLoginEligible(user, payload.password);
 
-    const principal = await this.toPrincipal(user);
-    const session = await this.createSession(user, metadata);
+    const [principal, session] = await Promise.all([
+      this.toPrincipal(user),
+      this.createSession(user, metadata),
+    ]);
     const accessToken = await this.signAccessToken(principal);
 
-    await this.prisma.user.update({
-      where: {
-        id: user.id,
-      },
-      data: {
-        lastLoginAt: new Date(),
-      },
-    });
-
-    await this.auditService.record({
-      tenantId: principal.tenantId,
-      branchId: principal.branchId,
-      userId: principal.userId,
-      action: AuditAction.LOGIN,
-      entityType: "user",
-      entityId: principal.userId,
-      metadata: {
-        roles: principal.roleCodes,
-      },
-      ipAddress: metadata.ipAddress,
-      userAgent: metadata.userAgent,
-    });
+    this.recordLoginSideEffects(user, principal, metadata);
 
     return {
       accessToken,
@@ -112,15 +90,7 @@ export class AuthService {
             branch: true,
             userRoles: {
               include: {
-                role: {
-                  include: {
-                    rolePermissions: {
-                      include: {
-                        permission: true,
-                      },
-                    },
-                  },
-                },
+                role: true,
               },
             },
           },
@@ -270,15 +240,7 @@ export class AuthService {
         branch: true,
         userRoles: {
           include: {
-            role: {
-              include: {
-                rolePermissions: {
-                  include: {
-                    permission: true,
-                  },
-                },
-              },
-            },
+            role: true,
           },
         },
       },
@@ -301,15 +263,7 @@ export class AuthService {
         branch: true,
         userRoles: {
           include: {
-            role: {
-              include: {
-                rolePermissions: {
-                  include: {
-                    permission: true,
-                  },
-                },
-              },
-            },
+            role: true,
           },
         },
       },
@@ -340,13 +294,13 @@ export class AuthService {
   private async toPrincipal(user: UserWithAccess): Promise<AuthenticatedUser> {
     const roleCodes = user.userRoles.map(({ role }) => role.code);
     const roleNames = user.userRoles.map(({ role }) => role.name);
-    const permissions = Array.from(
-      new Set(
-        user.userRoles.flatMap(({ role }) =>
-          role.rolePermissions.map(({ permission }) => permission.code),
-        ),
-      ),
-    );
+    const permissions = roleCodes.includes("super_admin")
+      ? allPermissionCodes
+      : Array.from(
+          new Set(
+            roleCodes.flatMap((roleCode) => rolePermissionCodesMap.get(roleCode) ?? []),
+          ),
+        );
     const scopes = Array.from(
       new Set(
         roleCodes
@@ -413,5 +367,40 @@ export class AuthService {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + ttlInDays);
     return expiresAt;
+  }
+
+  private recordLoginSideEffects(
+    user: UserWithAccess,
+    principal: AuthenticatedUser,
+    metadata: RequestMetadata,
+  ) {
+    void Promise.all([
+      this.prisma.user.update({
+        where: {
+          id: user.id,
+        },
+        data: {
+          lastLoginAt: new Date(),
+        },
+      }),
+      this.auditService.record({
+        tenantId: principal.tenantId,
+        branchId: principal.branchId,
+        userId: principal.userId,
+        action: AuditAction.LOGIN,
+        entityType: "user",
+        entityId: principal.userId,
+        metadata: {
+          roles: principal.roleCodes,
+        },
+        ipAddress: metadata.ipAddress,
+        userAgent: metadata.userAgent,
+      }),
+    ]).catch((error) => {
+      this.logger.error(
+        "Failed to record login side effects",
+        error instanceof Error ? error.stack : String(error),
+      );
+    });
   }
 }

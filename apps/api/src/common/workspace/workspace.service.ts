@@ -1,5 +1,4 @@
 import { Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
-import { seedTenantRbac } from "@sotec/database";
 import { PrismaService } from "../prisma/prisma.service";
 import { hashPassword, verifyPassword } from "../../modules/auth/auth.utils";
 
@@ -63,9 +62,20 @@ const BANK_ACCOUNT_HOLDER_KEY = "documents.bank_account_holder";
 
 @Injectable()
 export class WorkspaceService {
+  private workspacePromise?: Promise<WorkspaceContext>;
+
   constructor(private readonly prisma: PrismaService) {}
 
   async ensureWorkspace(): Promise<WorkspaceContext> {
+    this.workspacePromise ??= this.resolveWorkspace().catch((error) => {
+      this.workspacePromise = undefined;
+      throw error;
+    });
+
+    return this.workspacePromise;
+  }
+
+  private async resolveWorkspace(): Promise<WorkspaceContext> {
     const slug = process.env.DEFAULT_TENANT_SLUG ?? "sotec";
     const ownerEmail = (process.env.DEFAULT_OWNER_EMAIL ?? "admin@sotec.local").trim().toLowerCase();
     const ownerPassword = process.env.DEFAULT_OWNER_PASSWORD ?? "ChangeMe123!";
@@ -82,8 +92,6 @@ export class WorkspaceService {
           timezone: "Africa/Tunis",
         },
       }));
-
-    await seedTenantRbac(this.prisma, tenant.id);
 
     const branch =
       (await this.prisma.branch.findFirst({
@@ -147,12 +155,25 @@ export class WorkspaceService {
       });
     }
 
-    const superAdminRole = await this.prisma.role.findUniqueOrThrow({
+    const superAdminRole = await this.prisma.role.upsert({
       where: {
         tenantId_code: {
           tenantId: tenant.id,
           code: "super_admin",
         },
+      },
+      update: {
+        name: "Super Admin",
+        description: "Full tenant administration across all business and security modules.",
+        isSystemRole: true,
+        deletedAt: null,
+      },
+      create: {
+        tenantId: tenant.id,
+        code: "super_admin",
+        name: "Super Admin",
+        description: "Full tenant administration across all business and security modules.",
+        isSystemRole: true,
       },
     });
 
