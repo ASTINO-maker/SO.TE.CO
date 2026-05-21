@@ -608,21 +608,42 @@ export function QuotationsWorkspace() {
     setFeedback(`${filtered.length} devis exportés en CSV.`);
   }
 
-  function handleDuplicate(quotation: QuotationRecord) {
-    const nextId = `quotation-copy-${Date.now()}`;
-    const duplicate: QuotationRecord = {
-      ...quotation,
-      id: nextId,
-      number: `Q-2026-${String(quotations.length + 140).padStart(4, "0")}`,
-      date: formatQuotationDate("2026-04-01"),
-      validUntil: formatQuotationDate("2026-05-01"),
-      status: "DRAFT",
-      notes: `Dupliqué depuis ${quotation.number}.`,
+  async function handleDuplicate(quotation: QuotationRecord) {
+    const today = new Date();
+    const validUntil = new Date(today);
+    validUntil.setDate(validUntil.getDate() + 30);
+    const toIso = (date: Date) => date.toISOString().slice(0, 10);
+
+    const lines = (quotation.lines ?? []).map((line) => ({
+      description: line.label,
+      quantity: Math.max(0.001, parseQuotationNumber(line.quantity) || 1),
+      unit: line.unit || "u",
+      unitPrice: Math.max(0.001, parseQuotationNumber(line.unitPrice) || 0.001),
+    }));
+    const amount = lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
+
+    const payload = {
+      client: quotation.client,
+      status: "DRAFT" as const,
+      issueDate: toIso(today),
+      validUntil: toIso(validUntil),
+      chantier: quotation.chantier,
+      scope: quotation.scope,
+      amount: amount > 0 ? amount : 0.001,
+      itemCount: Math.max(1, lines.length),
+      lines: lines.length ? lines : undefined,
+      note: `Dupliqué depuis ${quotation.number}.`,
     };
-    setQuotations((current) => [duplicate, ...current]);
-    setSelectedId(nextId);
-    setShowViewer(true);
-    setFeedback(`${quotation.number} dupliqué en brouillon.`);
+
+    try {
+      const created = await apiClient.post<QuotationRecord>("/sales/quotations", payload);
+      setQuotations((current) => [created, ...current]);
+      setSelectedId(created.id);
+      setShowViewer(true);
+      setFeedback(`${quotation.number} dupliqué en ${created.number}.`);
+    } catch (error) {
+      setFeedback(getApiErrorMessage(error, "Impossible de dupliquer le devis."));
+    }
   }
 
   async function handleCreateDraft() {
@@ -953,7 +974,7 @@ export function QuotationsWorkspace() {
                       type="button"
                       variant="outline"
                       className="h-9 rounded-xl px-3"
-                      onClick={() => handleDuplicate(quotation)}
+                      onClick={() => void handleDuplicate(quotation)}
                       title="Dupliquer en nouveau brouillon"
                     >
                       <Copy className="h-4 w-4" />
@@ -1008,7 +1029,7 @@ export function QuotationsWorkspace() {
                 <Pencil className="h-4 w-4" />
                 Modifier
               </Button>
-              <Button type="button" variant="outline" className="rounded-2xl" onClick={() => handleDuplicate(selectedQuotation)}>
+              <Button type="button" variant="outline" className="rounded-2xl" onClick={() => void handleDuplicate(selectedQuotation)}>
                 <Copy className="h-4 w-4" />
                 Dupliquer
               </Button>

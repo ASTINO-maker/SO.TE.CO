@@ -30,6 +30,29 @@ import { UpdatePaymentDto } from "./dto/update-payment.dto";
 import { UpdateQuotationDto } from "./dto/update-quotation.dto";
 import { UpdateDeliveryNoteDto } from "./dto/update-delivery-note.dto";
 
+/**
+ * Retry helper for create flows that depend on a freshly-computed sequential
+ * number. If two requests race and both compute the same number, Postgres
+ * rejects the second insert with P2002 (unique violation on
+ * `@@unique([tenantId, number])`). We re-run the whole compute-and-insert
+ * closure so the loser reads the just-committed row and increments past it.
+ */
+async function withNumberingRetry<T>(operation: () => Promise<T>, maxAttempts = 5): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const code = (error as { code?: string })?.code;
+      if (code !== "P2002") throw error;
+      lastError = error;
+      // Tiny jitter to spread concurrent retries.
+      await new Promise((resolve) => setTimeout(resolve, 10 + Math.floor(Math.random() * 30)));
+    }
+  }
+  throw lastError;
+}
+
 type ScopeContext = {
   tenantId: string;
   branchId: string | null;
@@ -116,7 +139,6 @@ export class SalesService {
     const validUntil = payload.validUntil ? new Date(payload.validUntil) : null;
     const chantierTitle = payload.chantier?.trim() || "Chantier à définir";
     const scopeText = payload.scope?.trim() || "";
-    const number = await this.nextQuotationNumber(scope.tenantId, issueDate);
     const customLines = (payload.lines ?? [])
       .map((line) => ({
         label: line.description.trim(),
@@ -133,7 +155,9 @@ export class SalesService {
     const totalAmountValue = lines.reduce((sum, line) => sum + line.totalValue, 0);
     const totalAmount = new Prisma.Decimal(totalAmountValue);
 
-    const quotation = await this.prisma.quotation.create({
+    const quotation = await withNumberingRetry(async () => {
+      const number = await this.nextQuotationNumber(scope.tenantId, issueDate);
+      return this.prisma.quotation.create({
       data: {
         tenantId: scope.tenantId,
         branchId: scope.branchId ?? undefined,
@@ -171,6 +195,7 @@ export class SalesService {
           },
         },
       },
+    });
     });
 
     return this.toQuotationRecord(quotation);
@@ -340,7 +365,6 @@ export class SalesService {
   async createInvoice(user: AuthenticatedUser | undefined, payload: CreateInvoiceDto) {
     const scope = await this.resolveScope(user);
     const client = await this.findClientByName(scope.tenantId, payload.client);
-    const number = await this.nextInvoiceNumber(scope.tenantId);
     const issueDate = payload.issueDate ? new Date(payload.issueDate) : new Date();
     const dueDate = payload.dueDate ? new Date(payload.dueDate) : null;
     const validLines = payload.lines
@@ -358,7 +382,9 @@ export class SalesService {
     }
 
     const totalAmount = validLines.reduce((sum, line) => sum + line.totalValue, 0);
-    const invoice = await this.prisma.invoice.create({
+    const invoice = await withNumberingRetry(async () => {
+      const number = await this.nextInvoiceNumber(scope.tenantId);
+      return this.prisma.invoice.create({
       data: {
         tenantId: scope.tenantId,
         branchId: scope.branchId ?? undefined,
@@ -397,6 +423,7 @@ export class SalesService {
           },
         },
       },
+    });
     });
 
     return this.toInvoiceRecord(invoice, payload.paymentTerms);
@@ -611,7 +638,6 @@ export class SalesService {
     }
 
     const vehicle = await this.ensureVehicle(scope, payload.vehicle ?? "");
-    const number = await this.nextDeliveryNoteNumber(scope.tenantId);
     const items = payload.itemsNote
       .split("\n")
       .map((line) => line.trim())
@@ -633,7 +659,9 @@ export class SalesService {
       throw new NotFoundException("At least one delivery item is required");
     }
 
-    const note = await this.prisma.deliveryNote.create({
+    const note = await withNumberingRetry(async () => {
+      const number = await this.nextDeliveryNoteNumber(scope.tenantId);
+      return this.prisma.deliveryNote.create({
       data: {
         tenantId: scope.tenantId,
         branchId: scope.branchId ?? undefined,
@@ -668,6 +696,7 @@ export class SalesService {
           },
         },
       },
+    });
     });
 
     return this.toDeliveryNoteRecord(note);
@@ -904,33 +933,35 @@ export class SalesService {
         })
       : null;
     const paymentDate = new Date(payload.paymentDate);
-    const number = await this.nextPaymentNumber(scope.tenantId, paymentDate);
 
-    const payment = await this.prisma.payment.create({
-      data: {
-        tenantId: scope.tenantId,
-        branchId: scope.branchId ?? undefined,
-        clientId: client.id,
-        projectId: project?.id,
-        receivedByUserId: scope.userId ?? undefined,
-        number,
-        status: payload.status,
-        method: payload.method,
-        paymentDate,
-        amount: new Prisma.Decimal(payload.amount),
-        currency: "TND",
-        reference: payload.reference?.trim() || undefined,
-        internalNotes: payload.note?.trim() || undefined,
-      },
-      include: {
-        client: true,
-        project: true,
-        allocations: {
-          include: {
-            invoice: true,
+    const payment = await withNumberingRetry(async () => {
+      const number = await this.nextPaymentNumber(scope.tenantId, paymentDate);
+      return this.prisma.payment.create({
+        data: {
+          tenantId: scope.tenantId,
+          branchId: scope.branchId ?? undefined,
+          clientId: client.id,
+          projectId: project?.id,
+          receivedByUserId: scope.userId ?? undefined,
+          number,
+          status: payload.status,
+          method: payload.method,
+          paymentDate,
+          amount: new Prisma.Decimal(payload.amount),
+          currency: "TND",
+          reference: payload.reference?.trim() || undefined,
+          internalNotes: payload.note?.trim() || undefined,
+        },
+        include: {
+          client: true,
+          project: true,
+          allocations: {
+            include: {
+              invoice: true,
+            },
           },
         },
-      },
+      });
     });
 
     return this.toPaymentRecord(payment);

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { formatTnd } from "@sotec/config";
 import { renderQuotationMarkupFromRecord } from "../../../../../../lib/server/document-templates";
 import { renderPdfBuffer } from "../../../../../../lib/server/pdf-renderer";
 import { prisma } from "../../../../../../lib/server/prisma";
@@ -56,10 +57,7 @@ function formatDisplayDate(value: Date | string | null | undefined) {
 }
 
 function formatMoney(value: unknown) {
-  return `${decimalToNumber(value).toLocaleString("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 3,
-  })} DT`;
+  return formatTnd(decimalToNumber(value));
 }
 
 function buildAddress(...parts: Array<string | null | undefined>) {
@@ -162,7 +160,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       },
       lines: quotation.items.map((item) => ({
         label: item.itemName,
-        quantity: decimalToNumber(item.quantity).toLocaleString("en-US", {
+        quantity: decimalToNumber(item.quantity).toLocaleString("fr-FR", {
           minimumFractionDigits: 0,
           maximumFractionDigits: 3,
         }),
