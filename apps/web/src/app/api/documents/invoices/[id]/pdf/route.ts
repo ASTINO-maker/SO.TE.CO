@@ -174,8 +174,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       totalAmount: formatMoney(invoice.totalAmount),
       paidAmount: formatMoney(invoice.paidAmount),
       balanceDue: formatMoney(invoice.balanceDue),
-      paymentTerms: "Bank transfer - 30 days",
-      scope: invoice.customerNotes || invoice.internalNotes || "Invoice",
+      paymentTerms: "Virement bancaire - 30 jours",
+      scope: `Facture ${invoice.number}`,
+      notes: invoice.customerNotes?.trim() || null,
       client: {
         displayName: invoice.client.displayName,
         code: invoice.client.code,

@@ -10,6 +10,12 @@ import type { ApiError, PaginatedResponse } from "../../lib/api/types";
 import { renderInvoiceMarkupFromRecord } from "../../lib/server/document-templates";
 import { cn } from "../../lib/utils";
 import { buildCsvFilename, downloadCsv, rowsToCsv } from "../../lib/csv-export";
+import { StatusMenu } from "./status-menu";
+import {
+  INVOICE_STATUS_LABEL,
+  getInvoiceTransitions,
+  toApiInvoiceStatus,
+} from "./status-transitions";
 import { StatusBadge } from "../admin/status-badge";
 import { FormField } from "../admin/form-field";
 import {
@@ -45,7 +51,7 @@ export interface InvoiceRecord {
   amount: string;
   paid: string;
   remaining: string;
-  status: "PAID" | "UNPAID" | "PARTIAL" | "OVERDUE";
+  status: "DRAFT" | "ISSUED" | "PAID" | "UNPAID" | "PARTIAL" | "PARTIALLY_PAID" | "OVERDUE" | "VOID" | "CANCELLED";
   paymentTerms: string;
   scope: string;
   linkedActivity: ViewerListItem[];
@@ -358,6 +364,23 @@ export function InvoicesWorkspace() {
   function openViewer(invoice: InvoiceRecord) {
     setSelectedId(invoice.id);
     setShowViewer(true);
+  }
+
+  async function handleChangeStatus(invoice: InvoiceRecord, nextStatus: string) {
+    if (invoice.status === nextStatus) return;
+    const apiStatus = toApiInvoiceStatus(nextStatus);
+    try {
+      const updated = await apiClient.patch<InvoiceRecord>(`/sales/invoices/${invoice.id}`, {
+        status: apiStatus,
+      });
+      setInvoices((current) =>
+        current.map((item) => (item.id === invoice.id ? updated : item)),
+      );
+      const label = INVOICE_STATUS_LABEL[nextStatus] ?? nextStatus;
+      setFeedback(`${invoice.number} → ${label}.`);
+    } catch (error) {
+      setFeedback(getApiErrorMessage(error, "Impossible de mettre à jour le statut de la facture."));
+    }
   }
 
   function handleExportCsv() {
@@ -1080,7 +1103,7 @@ export function InvoicesWorkspace() {
                   <div>
                     <StatusBadge status={invoice.status} />
                   </div>
-                  <div className="flex justify-end">
+                  <div className="flex flex-col items-end gap-2">
                     <ActionGroup>
                       <ActionIcon label="Voir la facture" onClick={() => openViewer(invoice)}>
                         <Eye className="h-4 w-4" />
@@ -1101,6 +1124,13 @@ export function InvoicesWorkspace() {
                         <Trash2 className="h-4 w-4" />
                       </ActionIcon>
                     </ActionGroup>
+                    <StatusMenu
+                      current={invoice.status}
+                      currentLabel={INVOICE_STATUS_LABEL[invoice.status]}
+                      options={getInvoiceTransitions(invoice.status)}
+                      onSelect={(next) => void handleChangeStatus(invoice, next)}
+                      label="Statut"
+                    />
                   </div>
                 </div>
                 )) : (
@@ -1128,15 +1158,25 @@ export function InvoicesWorkspace() {
           onDownload={() => handleDownload(selectedInvoice)}
           onPrint={() => handlePrint(selectedInvoice)}
           extraActions={
-            <Button
-              type="button"
-              variant="outline"
-              className="rounded-2xl"
-              onClick={() => openDeliveryDialogFromInvoice(selectedInvoice)}
-            >
-              <Truck className="h-4 w-4" />
-              Créer un bon
-            </Button>
+            <>
+              <StatusMenu
+                current={selectedInvoice.status}
+                currentLabel={INVOICE_STATUS_LABEL[selectedInvoice.status]}
+                options={getInvoiceTransitions(selectedInvoice.status)}
+                onSelect={(next) => void handleChangeStatus(selectedInvoice, next)}
+                buttonClassName="rounded-2xl h-10"
+                label={`Statut: ${INVOICE_STATUS_LABEL[selectedInvoice.status] ?? selectedInvoice.status}`}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-2xl"
+                onClick={() => openDeliveryDialogFromInvoice(selectedInvoice)}
+              >
+                <Truck className="h-4 w-4" />
+                Créer un bon
+              </Button>
+            </>
           }
         />
       ) : null}

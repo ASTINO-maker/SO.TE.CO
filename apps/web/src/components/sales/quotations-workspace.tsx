@@ -8,6 +8,12 @@ import type { ApiError, PaginatedResponse } from "../../lib/api/types";
 import { renderQuotationMarkupFromRecord } from "../../lib/server/document-templates";
 import { cn } from "../../lib/utils";
 import { buildCsvFilename, downloadCsv, rowsToCsv } from "../../lib/csv-export";
+import { StatusMenu } from "./status-menu";
+import {
+  QUOTATION_STATUS_LABEL,
+  getQuotationTransitions,
+  toApiQuotationStatus,
+} from "./status-transitions";
 import { StatusBadge } from "../admin/status-badge";
 import { FormField } from "../admin/form-field";
 import {
@@ -549,16 +555,23 @@ export function QuotationsWorkspace() {
   }
 
   async function handleSend(quotation: QuotationRecord) {
+    await handleChangeStatus(quotation, "SENT");
+  }
+
+  async function handleChangeStatus(quotation: QuotationRecord, nextStatus: string) {
+    if (quotation.status === nextStatus) return;
+    const apiStatus = toApiQuotationStatus(nextStatus);
     try {
       const updated = await apiClient.patch<QuotationRecord>(`/sales/quotations/${quotation.id}`, {
-        status: "SENT",
+        status: apiStatus,
       });
       setQuotations((current) =>
         current.map((item) => (item.id === quotation.id ? updated : item)),
       );
-      setFeedback(`${quotation.number} marqué comme envoyé.`);
+      const label = QUOTATION_STATUS_LABEL[nextStatus] ?? nextStatus;
+      setFeedback(`${quotation.number} → ${label}.`);
     } catch (error) {
-      setFeedback(getApiErrorMessage(error, "Impossible de mettre a jour le statut du devis."));
+      setFeedback(getApiErrorMessage(error, "Impossible de mettre à jour le statut du devis."));
     }
   }
 
@@ -952,6 +965,13 @@ export function QuotationsWorkspace() {
                         Envoyer
                       </Button>
                     ) : null}
+                    <StatusMenu
+                      current={quotation.status}
+                      currentLabel={QUOTATION_STATUS_LABEL[quotation.status]}
+                      options={getQuotationTransitions(quotation.status)}
+                      onSelect={(next) => void handleChangeStatus(quotation, next)}
+                      label="Statut"
+                    />
                     <Button type="button" variant="outline" className="h-9 rounded-xl px-3" onClick={() => void handleDeleteQuotation(quotation)}>
                       <Trash2 className="h-4 w-4" />
                       Supprimer
@@ -992,6 +1012,14 @@ export function QuotationsWorkspace() {
                 <Copy className="h-4 w-4" />
                 Dupliquer
               </Button>
+              <StatusMenu
+                current={selectedQuotation.status}
+                currentLabel={QUOTATION_STATUS_LABEL[selectedQuotation.status]}
+                options={getQuotationTransitions(selectedQuotation.status)}
+                onSelect={(next) => void handleChangeStatus(selectedQuotation, next)}
+                buttonClassName="rounded-2xl h-10"
+                label={`Statut: ${QUOTATION_STATUS_LABEL[selectedQuotation.status] ?? selectedQuotation.status}`}
+              />
               <Button type="button" className="rounded-2xl bg-[#2f4156] hover:bg-[#253548]" onClick={() => void handleSend(selectedQuotation)}>
                 <Send className="h-4 w-4" />
                 Envoyer
@@ -1447,10 +1475,6 @@ function toDateInputValue(value: string, fallback: string) {
   const month = String(parsed.getMonth() + 1).padStart(2, "0");
   const day = String(parsed.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function toApiQuotationStatus(status: QuotationRecord["status"]) {
-  return status === "REFUSED" ? "REJECTED" : status;
 }
 
 function formatQuotationStatusLabel(status: string) {

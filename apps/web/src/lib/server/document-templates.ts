@@ -126,7 +126,11 @@ function baseDocumentCss() {
   return `
       * { box-sizing: border-box; }
       body { margin: 0; padding: 10px; background: #ebe3d3; color: #0f172a; font-family: "Inter", "Arial", sans-serif; }
-      .page { width: 210mm; min-height: 297mm; margin: 0 auto; background: #ffffff; padding: 11mm 10mm; box-shadow: 0 20px 50px rgba(35, 28, 16, 0.12); }
+      .page { width: 210mm; height: 297mm; margin: 0 auto; background: #ffffff; padding: 11mm 10mm; box-shadow: 0 20px 50px rgba(35, 28, 16, 0.12); display: flex; flex-direction: column; }
+      .page-spacer { flex: 1 1 auto; min-height: 6mm; }
+      .page > .invoice-pro-closing,
+      .page > .quote-closing,
+      .page > .invoice-simple-page-footer { margin-top: auto; }
       .masthead { display: grid; grid-template-columns: minmax(0,1.25fr) minmax(180px,0.75fr); gap: 10px; align-items: start; padding-bottom: 7px; border-bottom: 1px solid #d7dde5; }
       .brand-block { display: flex; gap: 9px; align-items: flex-start; min-width: 0; }
       .logo-shell { width: 46px; min-width: 46px; padding: 0; background: transparent; }
@@ -195,6 +199,9 @@ function baseDocumentCss() {
       .invoice-pro-table thead th:nth-child(2),
       .invoice-pro-table thead th:nth-child(3),
       .invoice-pro-table thead th:nth-child(4) { font-variant-numeric: tabular-nums; }
+      .invoice-pro-notes { margin-top: 10px; padding: 8px 10px; border: 1px dashed #d7dde5; border-radius: 10px; background: #fbfaf6; }
+      .invoice-pro-notes .section-title { font-size: 7.8px; letter-spacing: 0.16em; color: #64748b; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; }
+      .invoice-pro-notes p { margin: 0; font-size: 9.4px; line-height: 1.5; color: #334155; }
       .invoice-pro-tva-recap { margin-top: 10px; }
       .invoice-pro-tva-recap .section-title { font-size: 7.8px; letter-spacing: 0.16em; color: #64748b; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; }
       .invoice-tva-table { width: 60%; border-collapse: collapse; font-size: 9.6px; }
@@ -327,8 +334,8 @@ function baseDocumentCss() {
         .quote-closing-meta { text-align: left; }
         .invoice-pro-closing-meta { text-align: left; }
       }
-      @page { size: A4; margin: 0; }
-      @media print { body { padding: 0; background: white; } .page { width: 210mm; min-height: 297mm; padding: 10mm 9mm; box-shadow: none; } }
+      @page { size: A4 portrait; margin: 0; }
+      @media print { body { padding: 0; background: white; } .page { width: 210mm; height: 297mm; padding: 10mm 9mm; box-shadow: none; page-break-after: avoid; } }
   `;
 }
 
@@ -384,6 +391,7 @@ export function renderInvoiceMarkupFromRecord(invoice: {
   balanceDue: number | string;
   paymentTerms: string;
   scope: string;
+  notes?: string | null;
   client: {
     displayName: string;
     code: string;
@@ -422,6 +430,7 @@ export function renderInvoiceMarkupFromRecord(invoice: {
   const issueDate = formatFormalDate(invoice.issueDate);
   const status = escapeHtml(mapInvoiceStatus(invoice.status));
   const scope = escapeHtml(invoice.scope || "Document commercial");
+  const customerNotes = invoice.notes ? escapeHtml(invoice.notes) : "";
   const totalBaseValue = round3(toNumericValue(invoice.totalAmount));
   const fodecValue = round3(totalBaseValue * 0.01);
   const totalHtValue = round3(totalBaseValue + fodecValue);
@@ -546,6 +555,7 @@ export function renderInvoiceMarkupFromRecord(invoice: {
           <div class="section-title">Référence dossier</div>
           <h3>${scope}</h3>
           <p>
+            Statut: <strong>${status}</strong><br/>
             Société émettrice: ${headerCompanyName}<br/>
             Bureau: ${headerAddressLine}<br/>
             Contact: ${headerPhonesDisplay}<br/>
@@ -555,9 +565,9 @@ export function renderInvoiceMarkupFromRecord(invoice: {
       </div>
 
       <div class="invoice-pro-intro">
-        Cette facture reprend les prestations, fournitures ou travaux validés pour le dossier
-        <strong>${scope}</strong>. Les montants ci-dessous sont exprimés en
-        <strong> dinar tunisien (DT)</strong> et calculés selon les règles fiscales en vigueur.
+        Cette facture reprend les prestations, fournitures ou travaux validés au profit du client.
+        Les montants ci-dessous sont exprimés en
+        <strong>dinar tunisien (DT)</strong> et calculés selon les règles fiscales en vigueur.
       </div>
 
       <table class="invoice-simple-table invoice-pro-table">
@@ -574,7 +584,7 @@ export function renderInvoiceMarkupFromRecord(invoice: {
             .map(
               (line) => `
                 <tr>
-                  <td><div class="designation-title">${escapeHtml(line.label)}</div><div class="designation-sub">${scope}</div></td>
+                  <td><div class="designation-title">${escapeHtml(line.label)}</div></td>
                   <td>${escapeHtml(line.quantity)}</td>
                   <td>${escapeHtml(line.unitPrice)}</td>
                   <td>${escapeHtml(line.total)}</td>
@@ -660,14 +670,15 @@ export function renderInvoiceMarkupFromRecord(invoice: {
           : ""
       }
 
+      ${customerNotes ? `<div class="invoice-pro-notes"><div class="section-title">Notes</div><p>${customerNotes.replaceAll("\n", "<br/>")}</p></div>` : ""}
+
       <div class="invoice-pro-closing">
         <div class="invoice-pro-closing-copy">
           <strong>Arrêtée la présente facture à la somme de ${totalTtcAmount} TTC.</strong><br/>
-          Document commercial et comptable établi par <strong>${headerCompanyName}</strong> pour le dossier
-          <strong>${scope}</strong>. Merci de régler cette facture selon les délais convenus.
+          Document commercial et comptable établi par <strong>${headerCompanyName}</strong>. Merci de régler cette facture selon les délais convenus.
         </div>
         <div class="invoice-pro-closing-meta">
-          <div>Facture SO.TE.CO</div>
+          <div>Facture ${escapeHtml(invoice.number)}</div>
           <div>Page 1 sur 1</div>
         </div>
       </div>
