@@ -26,11 +26,16 @@ function resolveChromeBin(): string {
   throw new Error("Chrome/Chromium not found. Set the CHROME_BIN environment variable.");
 }
 
-const CHROME_BIN = resolveChromeBin();
 const PDF_CACHE_TTL_MS = 60_000;
 const PDF_VIRTUAL_TIME_BUDGET_MS = Number.parseInt(process.env.PDF_VIRTUAL_TIME_BUDGET_MS ?? "600", 10);
 const pdfBufferCache = new Map<string, { buffer: Buffer; expiresAt: number }>();
 const inflightRenderCache = new Map<string, Promise<Buffer>>();
+let cachedChromeBin: string | null = null;
+
+function getChromeBin() {
+  cachedChromeBin ??= resolveChromeBin();
+  return cachedChromeBin;
+}
 
 export async function renderPdfBuffer(filename: string, markup: string) {
   const cacheKey = createHash("sha1").update(filename).update("\0").update(markup).digest("hex");
@@ -73,7 +78,7 @@ async function renderPdfBufferUncached(filename: string, markup: string) {
   await writeFile(htmlPath, markup, "utf8");
 
   try {
-    await execFileAsync(CHROME_BIN, [
+    await execFileAsync(getChromeBin(), [
       "--headless",
       "--disable-gpu",
       "--no-sandbox",
