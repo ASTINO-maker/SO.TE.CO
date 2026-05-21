@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { WorkspaceService } from "../../common/workspace/workspace.service";
 import { CreateWorkerPaymentDto } from "./dto/create-worker-payment.dto";
+import type { AuthenticatedUser } from "../auth/interfaces/authenticated-user.interface";
 import { UpdateOwnerProfileDto } from "./dto/update-owner-profile.dto";
 import { UpdateWorkspaceSettingsDto } from "./dto/update-workspace-settings.dto";
 
@@ -53,9 +54,8 @@ export class SettingsService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async getDocumentSettings() {
-    const workspace = await this.workspaceService.ensureWorkspace();
-    return this.workspaceService.getDocumentSettings(workspace.tenantId);
+  async getDocumentSettings(user: AuthenticatedUser) {
+    return this.workspaceService.getDocumentSettings(user.tenantId);
   }
 
   async getOwnerAccount(userId: string): Promise<OwnerAccountSettings> {
@@ -191,7 +191,7 @@ export class SettingsService {
     };
   }
 
-  async updateDocumentSettings(payload: {
+  async updateDocumentSettings(user: AuthenticatedUser, payload: {
     headerCompanyName?: string;
     headerCompanySubtitle?: string;
     headerAddressLine?: string;
@@ -207,8 +207,7 @@ export class SettingsService {
     bankBic?: string;
     bankAccountHolder?: string;
   }) {
-    const workspace = await this.workspaceService.ensureWorkspace();
-    return this.workspaceService.updateDocumentSettings(workspace.tenantId, payload);
+    return this.workspaceService.updateDocumentSettings(user.tenantId, payload);
   }
 
   async getWorkerPayments() {

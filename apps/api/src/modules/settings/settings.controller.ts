@@ -16,8 +16,8 @@ export class SettingsController {
 
   @Get("documents")
   @ApiOperation({ summary: "Get document footer and banking settings" })
-  getDocumentSettings() {
-    return this.settingsService.getDocumentSettings();
+  getDocumentSettings(@CurrentUser() user: AuthenticatedUser) {
+    return this.settingsService.getDocumentSettings(user);
   }
 
   @Get("account")
@@ -52,8 +52,8 @@ export class SettingsController {
 
   @Patch("documents")
   @ApiOperation({ summary: "Update document footer and banking settings" })
-  updateDocumentSettings(@Body() body: UpdateDocumentSettingsDto) {
-    return this.settingsService.updateDocumentSettings(body);
+  updateDocumentSettings(@CurrentUser() user: AuthenticatedUser, @Body() body: UpdateDocumentSettingsDto) {
+    return this.settingsService.updateDocumentSettings(user, body);
   }
 
   @Get("worker-payments")
