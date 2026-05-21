@@ -371,6 +371,36 @@ export class CrmService {
     return this.getClient(user, existing.id);
   }
 
+  async deleteClient(user: AuthenticatedUser | undefined, clientId: string) {
+    const scope = await this.resolveScope(user);
+    const existing = await this.prisma.client.findFirst({
+      where: {
+        id: clientId,
+        tenantId: scope.tenantId,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException("Client not found");
+    }
+
+    await this.prisma.client.update({
+      where: {
+        id: existing.id,
+      },
+      data: {
+        isActive: false,
+        deletedAt: new Date(),
+      },
+    });
+
+    return { success: true };
+  }
+
   async listLeads(user: AuthenticatedUser | undefined, query: ListLeadsDto) {
     const scope = await this.resolveScope(user);
     const page = query.page ?? 1;

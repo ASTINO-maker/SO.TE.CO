@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { FormField } from "../../../../components/admin/form-field";
 import { ClientsWorkspace, type ClientRecord } from "../../../../components/crm/clients-workspace";
 import { Button } from "../../../../components/ui/button";
+import { useConfirmDialog } from "../../../../components/ui/confirm-dialog";
 import { DialogShell } from "../../../../components/ui/dialog";
 import { Input } from "../../../../components/ui/input";
 import { Textarea } from "../../../../components/ui/textarea";
@@ -101,6 +102,7 @@ export default function ClientsPage() {
   const [clientForm, setClientForm] = useState<ClientFormState>(emptyClientForm);
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const { confirm, confirmDialog } = useConfirmDialog();
   const clientDialogInitialRef = useRef<string | null>(null);
 
   const serializedClientDialogState = useMemo(
@@ -122,6 +124,9 @@ export default function ClientsPage() {
     updated: "mis à jour avec succès.",
     created: "créé avec succès.",
     saveFailed: "Impossible d'enregistrer le client.",
+    deleteFailed: "Impossible de supprimer la sélection.",
+    deletedOne: "Client supprimé.",
+    deletedMany: "Clients supprimés.",
     loading: "Chargement du registre clients...",
     pageFailed: "La page des clients n'a pas pu être chargée.",
     retry: "Réessayer",
@@ -341,6 +346,37 @@ export default function ClientsPage() {
     }
   }
 
+  async function deleteClients(clientIds: string[]) {
+    if (!clientIds.length) {
+      return false;
+    }
+
+    const confirmed = await confirm({
+      title:
+        clientIds.length === 1
+          ? "Supprimer ce client ?"
+          : `Supprimer ${clientIds.length} client(s) ?`,
+      description:
+        "Les clients sélectionnés seront retirés du portefeuille. Les documents et historiques liés restent conservés.",
+      confirmLabel: clientIds.length === 1 ? "Supprimer le client" : "Supprimer la sélection",
+      tone: "danger",
+    });
+
+    if (!confirmed) {
+      return false;
+    }
+
+    try {
+      await Promise.all(clientIds.map((id) => apiClient.del<{ success: boolean }>(`/crm/clients/${id}`)));
+      setClients((current) => current.filter((client) => !clientIds.includes(client.id)));
+      setFeedback(clientIds.length === 1 ? text.deletedOne : text.deletedMany);
+      return true;
+    } catch (error) {
+      setPageError(getApiErrorMessage(error, text.deleteFailed));
+      throw error;
+    }
+  }
+
   async function submitImportFile() {
     if (!importFile) {
       setImportError(text.importChooseFile);
@@ -424,9 +460,12 @@ export default function ClientsPage() {
           onOpenNewClient={openNewClient}
           onOpenImport={openImportDialog}
           onOpenEditClient={openEditClient}
+          onDeleteClients={deleteClients}
           feedback={feedback}
         />
       )}
+
+      {confirmDialog}
 
       <DialogShell
         open={showImportDialog}

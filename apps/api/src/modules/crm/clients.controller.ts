@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { RequirePermissions } from "../auth/decorators/permissions.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
@@ -44,5 +44,12 @@ export class ClientsController {
     @Body() payload: UpdateClientDto,
   ) {
     return this.crmService.updateClient(user, id, payload);
+  }
+
+  @ApiOperation({ summary: "Delete a client" })
+  @RequirePermissions("clients.archive")
+  @Delete(":id")
+  remove(@CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    return this.crmService.deleteClient(user, id);
   }
 }

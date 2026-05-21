@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Building2,
@@ -19,6 +19,7 @@ import {
   Receipt,
   Search,
   SlidersHorizontal,
+  Trash2,
 } from "lucide-react";
 import { getBrandLogoUrl } from "../../lib/branding";
 import { cn } from "../../lib/utils";
@@ -96,15 +97,19 @@ export function ClientsWorkspace({
   onOpenNewClient,
   onOpenImport,
   onOpenEditClient,
+  onDeleteClients,
   feedback,
 }: {
   clients: ClientRecord[];
   onOpenNewClient: () => void;
   onOpenImport: () => void;
   onOpenEditClient: (client: ClientRecord) => void;
+  onDeleteClients: (clientIds: string[]) => Promise<boolean>;
   feedback?: string;
 }) {
   const [selectedClientId, setSelectedClientId] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isDeletingSelected, setIsDeletingSelected] = useState(false);
   const [activeTab, setActiveTab] = useState<ClientTab>("profile");
   const [search, setSearch] = useState("");
   const [showFilters, setShowFilters] = useState(false);
@@ -127,6 +132,9 @@ export function ClientsWorkspace({
   }, [clients, search]);
 
   const selectedClient = clients.find((client) => client.id === selectedClientId) ?? null;
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const allVisibleSelected =
+    filteredClients.length > 0 && filteredClients.every((client) => selectedIdSet.has(client.id));
 
   const selectedClientInvoices = selectedClient?.invoices ?? [];
   const selectedClientQuotations = selectedClient?.quotations ?? [];
@@ -176,9 +184,45 @@ export function ClientsWorkspace({
     : [];
 
   const clientGridColumns =
-    "grid-cols-[minmax(220px,2fr)_minmax(210px,1.8fr)_minmax(240px,2.2fr)_minmax(90px,0.9fr)_minmax(110px,1fr)_minmax(92px,1fr)_44px]";
+    "grid-cols-[44px_minmax(220px,2fr)_minmax(210px,1.8fr)_minmax(240px,2.2fr)_minmax(90px,0.9fr)_minmax(110px,1fr)_minmax(92px,1fr)_44px]";
   const activeClients = clients.filter((client) => client.status === "ACTIVE").length;
   const unpaidClients = clients.filter((client) => parseTndAmount(client.unpaidBalance) > 0).length;
+
+  useEffect(() => {
+    const clientIds = new Set(clients.map((client) => client.id));
+    setSelectedIds((current) => current.filter((id) => clientIds.has(id)));
+    setSelectedClientId((current) => (current && clientIds.has(current) ? current : ""));
+  }, [clients]);
+
+  function toggleClientSelection(clientId: string) {
+    setSelectedIds((current) =>
+      current.includes(clientId) ? current.filter((id) => id !== clientId) : [...current, clientId],
+    );
+  }
+
+  function toggleAllVisibleClients() {
+    setSelectedIds((current) =>
+      allVisibleSelected
+        ? current.filter((id) => !filteredClients.some((client) => client.id === id))
+        : Array.from(new Set([...current, ...filteredClients.map((client) => client.id)])),
+    );
+  }
+
+  async function deleteSelectedClients() {
+    if (!selectedIds.length || isDeletingSelected) {
+      return;
+    }
+
+    setIsDeletingSelected(true);
+    try {
+      const deleted = await onDeleteClients(selectedIds);
+      if (deleted) {
+        setSelectedIds([]);
+      }
+    } finally {
+      setIsDeletingSelected(false);
+    }
+  }
 
   const openInvoiceViewer = (invoice: ClientRecord["invoices"][number]) => {
     if (!selectedClient) {
@@ -351,9 +395,35 @@ export function ClientsWorkspace({
 
         <Card className="rounded-[1.75rem] border-black/6 shadow-sm">
           <CardContent className="p-0">
+            {selectedIds.length ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-black/6 bg-[#fbf6ee] px-6 py-4">
+                <p className="text-sm font-medium text-slate-700">
+                  {selectedIds.length} client(s) sélectionné(s)
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 rounded-2xl border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800"
+                  onClick={() => void deleteSelectedClients()}
+                  disabled={isDeletingSelected}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {isDeletingSelected ? "Suppression..." : "Supprimer"}
+                </Button>
+              </div>
+            ) : null}
             <div className="overflow-x-auto">
-              <div className="min-w-[980px]">
+              <div className="min-w-[1040px]">
                 <div className={cn("grid gap-4 border-b border-black/6 px-6 py-4 text-sm font-medium text-slate-500", clientGridColumns)}>
+                  <span className="flex items-center">
+                    <input
+                      type="checkbox"
+                      aria-label="Sélectionner tous les clients visibles"
+                      checked={allVisibleSelected}
+                      onChange={toggleAllVisibleClients}
+                      className="h-4 w-4 rounded border-slate-300 text-[#2f4156]"
+                    />
+                  </span>
                   <span>Client</span>
                   <span>Contact</span>
                   <span>Adresse</span>
@@ -366,15 +436,25 @@ export function ClientsWorkspace({
                 <div className="divide-y divide-black/6">
                   {filteredClients.map((client) => {
                     const isActive = client.id === selectedClient?.id;
+                    const isSelected = selectedIdSet.has(client.id);
 
                     return (
-                      <button
+                      <div
                         key={client.id}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         onClick={() => {
                           setSelectedClientId(client.id);
                           setActiveTab("profile");
                           setShowClientDialog(true);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setSelectedClientId(client.id);
+                            setActiveTab("profile");
+                            setShowClientDialog(true);
+                          }
                         }}
                         aria-pressed={isActive}
                         aria-label={`Ouvrir les details du client ${client.name}`}
@@ -382,8 +462,20 @@ export function ClientsWorkspace({
                           "grid w-full cursor-pointer gap-4 px-6 py-5 text-left transition-colors hover:bg-[#faf7f1]",
                           clientGridColumns,
                           isActive && "bg-[#f4efe5] ring-1 ring-inset ring-[#e7dbc5]",
+                          isSelected && "bg-[#fff7ed]",
                         )}
                       >
+                        <div className="flex items-center">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleClientSelection(client.id)}
+                            onClick={(event) => event.stopPropagation()}
+                            aria-label={`Sélectionner ${client.name}`}
+                            className="h-4 w-4 rounded border-slate-300 text-[#2f4156]"
+                          />
+                        </div>
+
                         <div className="flex min-w-0 items-start gap-4">
                           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#546c7c] text-base font-semibold text-white">
                             {client.initials}
@@ -431,7 +523,7 @@ export function ClientsWorkspace({
                         <div className="flex items-center justify-end">
                           <ChevronRight className="h-4 w-4 text-slate-400" />
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
