@@ -23,6 +23,10 @@ const DOCUMENT_SETTING_KEYS = {
   bankIban: "documents.bank_iban",
   bankBic: "documents.bank_bic",
   bankAccountHolder: "documents.bank_account_holder",
+  fodecRate: "documents.fodec_rate",
+  defaultTaxRate: "documents.default_tax_rate",
+  stampDuty: "documents.stamp_duty",
+  defaultPaymentTerms: "documents.default_payment_terms",
 } as const;
 
 function decimalToNumber(value: unknown) {
@@ -114,6 +118,15 @@ async function getDocumentSettings(tenantId: string) {
     }
     return fallback;
   };
+  const readNumber = (key: string, fallback: number) => {
+    const rawValue = settingsByKey.get(key);
+    if (typeof rawValue === "number" && Number.isFinite(rawValue)) return rawValue;
+    if (typeof rawValue === "string") {
+      const parsed = Number.parseFloat(rawValue.replace(",", "."));
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return fallback;
+  };
 
   return {
     headerCompanyName: readString(DOCUMENT_SETTING_KEYS.headerCompanyName, "SO.TE.CO"),
@@ -136,6 +149,10 @@ async function getDocumentSettings(tenantId: string) {
     bankIban: readString(DOCUMENT_SETTING_KEYS.bankIban, ""),
     bankBic: readString(DOCUMENT_SETTING_KEYS.bankBic, ""),
     bankAccountHolder: readString(DOCUMENT_SETTING_KEYS.bankAccountHolder, ""),
+    fodecRate: readNumber(DOCUMENT_SETTING_KEYS.fodecRate, 1),
+    defaultTaxRate: readNumber(DOCUMENT_SETTING_KEYS.defaultTaxRate, 19),
+    stampDuty: readNumber(DOCUMENT_SETTING_KEYS.stampDuty, 1),
+    defaultPaymentTerms: readString(DOCUMENT_SETTING_KEYS.defaultPaymentTerms, "Virement bancaire - 30 jours"),
   };
 }
 
@@ -172,7 +189,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       totalAmount: formatMoney(invoice.totalAmount),
       paidAmount: formatMoney(invoice.paidAmount),
       balanceDue: formatMoney(invoice.balanceDue),
-      paymentTerms: "Virement bancaire - 30 jours",
+      paymentTerms: settings.defaultPaymentTerms,
       scope: `Facture ${invoice.number}`,
       notes: invoice.customerNotes?.trim() || null,
       client: {

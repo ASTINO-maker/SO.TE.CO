@@ -67,6 +67,13 @@ function round3(value: number) {
   return Math.round(value * 1000) / 1000;
 }
 
+function clampRate(value: unknown, fallback: number): number {
+  if (value === undefined || value === null || value === "") return fallback;
+  const numeric = toNumericValue(value as number | string);
+  if (!Number.isFinite(numeric) || numeric < 0 || numeric > 100) return fallback;
+  return numeric;
+}
+
 type TvaBreakdownRow = { rate: number; baseHt: number; tva: number };
 
 function computeTvaBreakdown(
@@ -334,12 +341,18 @@ function baseDocumentCss() {
         .quote-closing-meta { text-align: left; }
         .invoice-pro-closing-meta { text-align: left; }
       }
+      .doc-watermark { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+      .doc-watermark span { font-size: 130px; font-weight: 900; letter-spacing: 0.06em; color: rgba(220, 38, 38, 0.14); border: 8px solid rgba(220, 38, 38, 0.18); padding: 24px 56px; border-radius: 20px; transform: rotate(-22deg); white-space: nowrap; text-transform: uppercase; }
+      .page { position: relative; }
       @page { size: A4 portrait; margin: 0; }
       @media print { body { padding: 0; background: white; } .page { width: 210mm; height: 297mm; padding: 10mm 9mm; box-shadow: none; page-break-after: avoid; } }
   `;
 }
 
-function renderDocumentShell(title: string, body: string) {
+function renderDocumentShell(title: string, body: string, watermark?: string | null) {
+  const watermarkHtml = watermark
+    ? `<div class="doc-watermark"><span>${escapeHtml(watermark)}</span></div>`
+    : "";
   return `<!DOCTYPE html>
 <html lang="fr">
   <head>
@@ -348,7 +361,7 @@ function renderDocumentShell(title: string, body: string) {
     <style>${baseDocumentCss()}</style>
   </head>
   <body>
-    <div class="page">${body}</div>
+    <div class="page">${watermarkHtml}${body}</div>
   </body>
 </html>`;
 }
@@ -423,6 +436,10 @@ export function renderInvoiceMarkupFromRecord(invoice: {
     bankIban?: string | null;
     bankBic?: string | null;
     bankAccountHolder?: string | null;
+    fodecRate?: number | string | null;
+    defaultTaxRate?: number | string | null;
+    stampDuty?: number | string | null;
+    defaultPaymentTerms?: string | null;
   };
   assetBaseUrl?: string;
 }) {
@@ -431,15 +448,20 @@ export function renderInvoiceMarkupFromRecord(invoice: {
   const status = escapeHtml(mapInvoiceStatus(invoice.status));
   const scope = escapeHtml(invoice.scope || "Document commercial");
   const customerNotes = invoice.notes ? escapeHtml(invoice.notes) : "";
+
+  const fodecRate = clampRate(invoice.settings?.fodecRate, 1);
+  const defaultTaxRate = clampRate(invoice.settings?.defaultTaxRate, 19);
+  const stampDuty = Math.max(0, toNumericValue(invoice.settings?.stampDuty ?? 1));
+
   const totalBaseValue = round3(toNumericValue(invoice.totalAmount));
-  const fodecValue = round3(totalBaseValue * 0.01);
+  const fodecValue = round3(totalBaseValue * (fodecRate / 100));
   const totalHtValue = round3(totalBaseValue + fodecValue);
 
   const tvaBreakdown = computeTvaBreakdown(invoice.lines, totalBaseValue, fodecValue);
   const tvaValue = tvaBreakdown.totalTva > 0
     ? tvaBreakdown.totalTva
-    : round3(totalHtValue * 0.19);
-  const timberValue = 1;
+    : round3(totalHtValue * (defaultTaxRate / 100));
+  const timberValue = stampDuty;
   const totalTtcValue = round3(totalHtValue + tvaValue + timberValue);
   const totalAmount = formatInvoiceTnd(totalBaseValue);
   const fodecAmount = formatInvoiceTnd(fodecValue);
@@ -632,10 +654,10 @@ export function renderInvoiceMarkupFromRecord(invoice: {
       <div class="invoice-pro-summary">
         <div class="invoice-pro-totals">
           <div class="invoice-pro-total-row"><span>Sous-total</span><strong>${totalAmount}</strong></div>
-          <div class="invoice-pro-total-row"><span>Fodec 1%</span><strong>${fodecAmount}</strong></div>
+          ${fodecValue > 0 ? `<div class="invoice-pro-total-row"><span>Fodec ${fodecRate}%</span><strong>${fodecAmount}</strong></div>` : ""}
           <div class="invoice-pro-total-row"><span>Total HT</span><strong>${totalHtAmount}</strong></div>
-          <div class="invoice-pro-total-row"><span>${tvaBreakdown.rows.length > 1 ? "TVA (voir détail)" : "TVA"}</span><strong>${tvaAmount}</strong></div>
-          <div class="invoice-pro-total-row"><span>Timbre 1 DT</span><strong>${timberAmount}</strong></div>
+          <div class="invoice-pro-total-row"><span>${tvaBreakdown.rows.length > 1 ? "TVA (voir détail)" : `TVA ${defaultTaxRate}%`}</span><strong>${tvaAmount}</strong></div>
+          ${timberValue > 0 ? `<div class="invoice-pro-total-row"><span>Timbre fiscal</span><strong>${timberAmount}</strong></div>` : ""}
           <div class="invoice-pro-total-row grand"><span>Total TTC</span><strong>${totalTtcAmount}</strong></div>
         </div>
       </div>
@@ -683,7 +705,25 @@ export function renderInvoiceMarkupFromRecord(invoice: {
         </div>
       </div>
     `,
+    invoiceWatermark(invoice.status),
   );
+}
+
+function invoiceWatermark(status: string): string | null {
+  const normalized = (status || "").toUpperCase();
+  if (normalized === "VOID") return "Annulée";
+  if (normalized === "CANCELLED") return "Annulée";
+  if (normalized === "DRAFT") return "Brouillon";
+  return null;
+}
+
+function quotationWatermark(status: string): string | null {
+  const normalized = (status || "").toUpperCase();
+  if (normalized === "CANCELLED") return "Annulé";
+  if (normalized === "REJECTED" || normalized === "REFUSED") return "Refusé";
+  if (normalized === "EXPIRED") return "Expiré";
+  if (normalized === "DRAFT") return "Brouillon";
+  return null;
 }
 
 export function renderQuotationMarkupFromRecord(quotation: {
@@ -715,6 +755,9 @@ export function renderQuotationMarkupFromRecord(quotation: {
     headerCapital?: string | null;
     headerArabicCompanyName?: string | null;
     headerArabicAddressLine?: string | null;
+    fodecRate?: number | string | null;
+    defaultTaxRate?: number | string | null;
+    stampDuty?: number | string | null;
   };
   assetBaseUrl?: string;
 }) {
@@ -723,11 +766,16 @@ export function renderQuotationMarkupFromRecord(quotation: {
   const scope = escapeHtml(quotation.title || "Devis commercial");
   const requestFor = escapeHtml(quotation.requestFor?.trim() || quotation.title || "le projet concerné");
   const note = escapeHtml(quotation.notes?.trim() || "");
+
+  const fodecRate = clampRate(quotation.settings?.fodecRate, 1);
+  const defaultTaxRate = clampRate(quotation.settings?.defaultTaxRate, 19);
+  const stampDuty = Math.max(0, toNumericValue(quotation.settings?.stampDuty ?? 1));
+
   const totalBaseValue = round3(toNumericValue(quotation.totalAmount));
-  const fodecValue = round3(totalBaseValue * 0.01);
+  const fodecValue = round3(totalBaseValue * (fodecRate / 100));
   const totalHtValue = round3(totalBaseValue + fodecValue);
-  const tvaValue = round3(totalHtValue * 0.19);
-  const timberValue = 1;
+  const tvaValue = round3(totalHtValue * (defaultTaxRate / 100));
+  const timberValue = stampDuty;
   const totalTtcValue = round3(totalHtValue + tvaValue + timberValue);
   const totalBaseAmount = formatInvoiceTnd(totalBaseValue);
   const fodecAmount = formatInvoiceTnd(fodecValue);
@@ -858,10 +906,10 @@ export function renderQuotationMarkupFromRecord(quotation: {
 
       <div class="quote-summary">
         <div class="quote-summary-row"><span>Sous-total</span><strong>${totalBaseAmount}</strong></div>
-        <div class="quote-summary-row"><span>Fodec 1%</span><strong>${fodecAmount}</strong></div>
+        ${fodecValue > 0 ? `<div class="quote-summary-row"><span>Fodec ${fodecRate}%</span><strong>${fodecAmount}</strong></div>` : ""}
         <div class="quote-summary-row"><span>Total HT</span><strong>${totalHtAmount}</strong></div>
-        <div class="quote-summary-row"><span>TVA 19%</span><strong>${tvaAmount}</strong></div>
-        <div class="quote-summary-row"><span>Timbre</span><strong>${timberAmount}</strong></div>
+        <div class="quote-summary-row"><span>TVA ${defaultTaxRate}%</span><strong>${tvaAmount}</strong></div>
+        ${timberValue > 0 ? `<div class="quote-summary-row"><span>Timbre fiscal</span><strong>${timberAmount}</strong></div>` : ""}
         <div class="quote-summary-row"><span>Total TTC</span><strong>${totalTtcAmount}</strong></div>
       </div>
 
@@ -876,7 +924,7 @@ export function renderQuotationMarkupFromRecord(quotation: {
             <div class="section-title">Conditions commerciales</div>
             <p>
               Les montants sont exprimés en dinar tunisien (DT).<br/>
-              TVA calculée au taux de 19% selon la réglementation en vigueur.<br/>
+              TVA calculée au taux de ${defaultTaxRate}% selon la réglementation en vigueur.<br/>
               Toute confirmation doit reprendre la référence <strong>${escapeHtml(quotation.number)}</strong>.
             </p>
           </div>
@@ -894,5 +942,6 @@ export function renderQuotationMarkupFromRecord(quotation: {
         </div>
       </div>
     `,
+    quotationWatermark(quotation.status),
   );
 }

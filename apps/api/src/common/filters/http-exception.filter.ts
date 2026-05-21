@@ -4,11 +4,14 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  Logger,
 } from "@nestjs/common";
 import type { Request, Response } from "express";
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(HttpExceptionFilter.name);
+
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
@@ -23,6 +26,24 @@ export class HttpExceptionFilter implements ExceptionFilter {
       exception instanceof HttpException ? exception.getResponse() : "Internal server error";
 
     const normalizedError = this.normalizeError(payload, status);
+
+    // Server-side errors: log structured details + stack and forward to Sentry
+    // (or any future error sink) via the captureException hook below. This
+    // turns Railway logs into something searchable.
+    if (status >= 500) {
+      const error =
+        exception instanceof Error ? exception : new Error(String(exception ?? "Unknown error"));
+      this.logger.error(
+        `[${status}] ${request.method} ${request.url} — ${normalizedError.message}`,
+        error.stack,
+      );
+      captureException(error, {
+        method: request.method,
+        url: request.url,
+        status,
+        code: normalizedError.code,
+      });
+    }
 
     response.status(status).json({
       statusCode: status,
@@ -70,4 +91,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
   private defaultCode(statusCode: number) {
     return statusCode >= 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_ERROR";
   }
+}
+
+/**
+ * Drop-in hook for Sentry / other error sinks. Replace the body with
+ *   Sentry.captureException(error, { extra: context });
+ * once @sentry/node is installed and SENTRY_DSN is configured.
+ */
+function captureException(_error: Error, _context: Record<string, unknown>) {
+  // intentionally empty — wire to Sentry by editing this function.
 }

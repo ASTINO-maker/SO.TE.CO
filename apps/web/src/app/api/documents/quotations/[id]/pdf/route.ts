@@ -19,6 +19,9 @@ const DOCUMENT_SETTING_KEYS = {
   headerCapital: "documents.header_capital",
   headerArabicCompanyName: "documents.header_arabic_company_name",
   headerArabicAddressLine: "documents.header_arabic_address_line",
+  fodecRate: "documents.fodec_rate",
+  defaultTaxRate: "documents.default_tax_rate",
+  stampDuty: "documents.stamp_duty",
 } as const;
 
 function decimalToNumber(value: unknown) {
@@ -91,6 +94,15 @@ async function getDocumentSettings(tenantId: string) {
     }
     return fallback;
   };
+  const readNumber = (key: string, fallback: number) => {
+    const rawValue = settingsByKey.get(key);
+    if (typeof rawValue === "number" && Number.isFinite(rawValue)) return rawValue;
+    if (typeof rawValue === "string") {
+      const parsed = Number.parseFloat(rawValue.replace(",", "."));
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return fallback;
+  };
 
   return {
     headerCompanyName: readString(DOCUMENT_SETTING_KEYS.headerCompanyName, "SO.TE.CO"),
@@ -109,6 +121,9 @@ async function getDocumentSettings(tenantId: string) {
       "الشركة التونسية للدراسات و البناء",
     ),
     headerArabicAddressLine: readString(DOCUMENT_SETTING_KEYS.headerArabicAddressLine, "سوسة"),
+    fodecRate: readNumber(DOCUMENT_SETTING_KEYS.fodecRate, 1),
+    defaultTaxRate: readNumber(DOCUMENT_SETTING_KEYS.defaultTaxRate, 19),
+    stampDuty: readNumber(DOCUMENT_SETTING_KEYS.stampDuty, 1),
   };
 }
 

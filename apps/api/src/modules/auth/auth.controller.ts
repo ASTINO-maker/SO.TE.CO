@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req } from "@nestjs/common";
+import { Body, Controller, Get, Post, Req, UseGuards } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import type { Request } from "express";
 import { AuthService } from "./auth.service";
@@ -6,6 +6,7 @@ import { BootstrapWorkspaceDto } from "./dto/bootstrap-workspace.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { Public } from "./decorators/public.decorator";
+import { LoginThrottleGuard } from "./guards/login-throttle.guard";
 import { LoginDto } from "./dto/login.dto";
 import { LogoutDto } from "./dto/logout.dto";
 import { RefreshTokenDto } from "./dto/refresh-token.dto";
@@ -17,6 +18,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Public()
+  @UseGuards(LoginThrottleGuard)
   @ApiOperation({ summary: "Authenticate with email and password" })
   @Post("login")
   login(@Body() payload: LoginDto, @Req() request: Request) {
