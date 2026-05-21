@@ -28,6 +28,7 @@ import {
   Coins,
 } from "lucide-react";
 import { usePersistedState } from "../lib/use-persisted-state";
+import { HealthBadge } from "./health-badge";
 import { apiClient } from "../lib/api/client";
 import { getNavigationSections, type IconKey } from "../lib/navigation";
 import { companyBrand } from "../lib/branding";
@@ -572,6 +573,7 @@ export function AppShell({ children }: PropsWithChildren) {
                       </span>
                     </div>
                   </button>
+                  <HealthBadge isDark={isDark} />
                   <div
                     className={cn(
                       "relative flex h-12 items-center gap-1 rounded-[1.4rem] border px-1.5 shadow-sm",

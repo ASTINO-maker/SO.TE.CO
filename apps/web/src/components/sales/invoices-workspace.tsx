@@ -9,6 +9,7 @@ import { apiClient } from "../../lib/api/client";
 import type { ApiError, PaginatedResponse } from "../../lib/api/types";
 import { renderInvoiceMarkupFromRecord } from "../../lib/server/document-templates";
 import { cn } from "../../lib/utils";
+import { buildCsvFilename, downloadCsv, rowsToCsv } from "../../lib/csv-export";
 import { StatusBadge } from "../admin/status-badge";
 import { FormField } from "../admin/form-field";
 import {
@@ -357,6 +358,39 @@ export function InvoicesWorkspace() {
   function openViewer(invoice: InvoiceRecord) {
     setSelectedId(invoice.id);
     setShowViewer(true);
+  }
+
+  function handleExportCsv() {
+    if (!filtered.length) {
+      setFeedback("Aucune facture à exporter.");
+      return;
+    }
+    const headers = [
+      "Numéro",
+      "Date",
+      "Échéance",
+      "Client",
+      "Objet",
+      "Statut",
+      "Montant",
+      "Encaissé",
+      "Reste dû",
+      "Modalité",
+    ];
+    const rows = filtered.map((invoice) => [
+      invoice.number,
+      invoice.date,
+      invoice.dueDate,
+      invoice.client,
+      invoice.scope,
+      invoice.status,
+      invoice.amount,
+      invoice.paid,
+      invoice.remaining,
+      invoice.paymentTerms,
+    ]);
+    downloadCsv(buildCsvFilename("factures"), rowsToCsv(headers, rows));
+    setFeedback(`${filtered.length} factures exportées en CSV.`);
   }
 
   function openNewInvoiceDialog() {
@@ -895,10 +929,23 @@ export function InvoicesWorkspace() {
                   Une vue simple pour suivre les factures émises, les montants encaissés et les dossiers qui doivent être relancés.
                 </p>
               </div>
-              <Button type="button" className="rounded-2xl bg-[#2f4156] hover:bg-[#253548]" onClick={openNewInvoiceDialog}>
-                <Plus className="h-4 w-4" />
-                Nouvelle facture
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="rounded-2xl"
+                  onClick={handleExportCsv}
+                  disabled={!filtered.length}
+                  title="Exporter la liste filtrée au format CSV"
+                >
+                  <Download className="h-4 w-4" />
+                  Exporter CSV
+                </Button>
+                <Button type="button" className="rounded-2xl bg-[#2f4156] hover:bg-[#253548]" onClick={openNewInvoiceDialog}>
+                  <Plus className="h-4 w-4" />
+                  Nouvelle facture
+                </Button>
+              </div>
             </div>
 
             <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">

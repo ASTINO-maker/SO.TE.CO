@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CheckCheck, Copy, Eye, Pencil, Plus, Search, Send, Trash2 } from "lucide-react";
+import { CheckCheck, Copy, Download, Eye, Pencil, Plus, Search, Send, Trash2 } from "lucide-react";
 import { formatTnd, formatTnQuantity } from "@sotec/config";
 import { apiClient } from "../../lib/api/client";
 import type { ApiError, PaginatedResponse } from "../../lib/api/types";
 import { renderQuotationMarkupFromRecord } from "../../lib/server/document-templates";
 import { cn } from "../../lib/utils";
+import { buildCsvFilename, downloadCsv, rowsToCsv } from "../../lib/csv-export";
 import { StatusBadge } from "../admin/status-badge";
 import { FormField } from "../admin/form-field";
 import {
@@ -561,6 +562,39 @@ export function QuotationsWorkspace() {
     }
   }
 
+  function handleExportCsv() {
+    if (!filtered.length) {
+      setFeedback("Aucun devis à exporter.");
+      return;
+    }
+    const headers = [
+      "Numéro",
+      "Date",
+      "Validité",
+      "Client",
+      "Chantier",
+      "Objet",
+      "Statut",
+      "Lignes",
+      "Montant",
+      "Notes",
+    ];
+    const rows = filtered.map((quotation) => [
+      quotation.number,
+      quotation.date,
+      quotation.validUntil,
+      quotation.client,
+      quotation.chantier,
+      quotation.scope,
+      quotation.status,
+      quotation.items,
+      quotation.amount,
+      quotation.notes,
+    ]);
+    downloadCsv(buildCsvFilename("devis"), rowsToCsv(headers, rows));
+    setFeedback(`${filtered.length} devis exportés en CSV.`);
+  }
+
   function handleDuplicate(quotation: QuotationRecord) {
     const nextId = `quotation-copy-${Date.now()}`;
     const duplicate: QuotationRecord = {
@@ -735,10 +769,23 @@ export function QuotationsWorkspace() {
                   client, chantier, objet, validité, montant et état d'avancement.
                 </p>
               </div>
-              <Button type="button" className="rounded-2xl bg-[#2f4156] hover:bg-[#253548]" onClick={openNewQuotationDialog}>
-                <Plus className="h-4 w-4" />
-                Nouveau devis
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="rounded-2xl"
+                  onClick={handleExportCsv}
+                  disabled={!filtered.length}
+                  title="Exporter la liste filtrée au format CSV"
+                >
+                  <Download className="h-4 w-4" />
+                  Exporter CSV
+                </Button>
+                <Button type="button" className="rounded-2xl bg-[#2f4156] hover:bg-[#253548]" onClick={openNewQuotationDialog}>
+                  <Plus className="h-4 w-4" />
+                  Nouveau devis
+                </Button>
+              </div>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -888,6 +935,16 @@ export function QuotationsWorkspace() {
                     <Button type="button" variant="outline" className="h-9 rounded-xl px-3" onClick={() => openEditQuotationDialog(quotation)}>
                       <Pencil className="h-4 w-4" />
                       Modifier
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9 rounded-xl px-3"
+                      onClick={() => handleDuplicate(quotation)}
+                      title="Dupliquer en nouveau brouillon"
+                    >
+                      <Copy className="h-4 w-4" />
+                      Dupliquer
                     </Button>
                     {quotation.status !== "SENT" && quotation.status !== "ACCEPTED" ? (
                       <Button type="button" variant="outline" className="h-9 rounded-xl px-3" onClick={() => void handleSend(quotation)}>

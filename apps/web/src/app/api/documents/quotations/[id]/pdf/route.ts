@@ -4,6 +4,7 @@ import { renderPdfBuffer } from "../../../../../../lib/server/pdf-renderer";
 import { prisma } from "../../../../../../lib/server/prisma";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const GLOBAL_SCOPE = "global";
 const DOCUMENT_SETTING_KEYS = {

@@ -1,0 +1,28 @@
+{
+  "name": "SO.TE.CO ERP/CRM",
+  "short_name": "SO.TE.CO",
+  "description": "ERP/CRM pour construction métallique — devis, factures, livraisons, chantiers.",
+  "lang": "fr",
+  "dir": "ltr",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f7f2e8",
+  "theme_color": "#2f4156",
+  "icons": [
+    {
+      "src": "/brand/sotec-logo.png",
+      "sizes": "192x192 256x256 384x384 512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/brand/sotec-mark.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ],
+  "categories": ["business", "productivity"]
+}
