@@ -66,6 +66,7 @@ interface ShellNotification {
 interface ShellPrincipal {
   fullName: string;
   email: string;
+  permissions: string[];
 }
 
 const initialNotifications: ShellNotification[] = [];
@@ -97,7 +98,10 @@ export function AppShell({ children }: PropsWithChildren) {
 
   const isDark = themeMode === "dark";
   const unreadCount = notifications.filter((item) => item.unread).length;
-  const navigationSections = getNavigationSections(locale);
+  const navigationSections = useMemo(
+    () => getNavigationSections(locale, principal?.permissions),
+    [locale, principal?.permissions],
+  );
   const navigationItems = useMemo(
     () =>
       navigationSections.flatMap((section) =>
@@ -131,8 +135,9 @@ export function AppShell({ children }: PropsWithChildren) {
       .join("")
       .slice(0, 2)
       .toUpperCase() || "A";
-  const createCommandItems = useMemo<ShellCommand[]>(
-    () => [
+  const createCommandItems = useMemo<ShellCommand[]>(() => {
+    const permissions = new Set(principal?.permissions ?? []);
+    const items: Array<ShellCommand & { requiredPermission: string }> = [
       {
         id: "create-client",
         title: "Creer un client",
@@ -140,6 +145,7 @@ export function AppShell({ children }: PropsWithChildren) {
         section: "Creer",
         icon: Users,
         keywords: "creer client crm nouveau fiche",
+        requiredPermission: "clients.create",
         run: () => {
           setCommandOpen(false);
           router.push("/crm/clients?action=new");
@@ -152,6 +158,7 @@ export function AppShell({ children }: PropsWithChildren) {
         section: "Creer",
         icon: UserPlus,
         keywords: "creer prospect lead crm nouveau",
+        requiredPermission: "leads.create",
         run: () => {
           setCommandOpen(false);
           router.push("/crm/leads?action=new");
@@ -164,6 +171,7 @@ export function AppShell({ children }: PropsWithChildren) {
         section: "Creer",
         icon: FileText,
         keywords: "creer devis quotation sales nouveau",
+        requiredPermission: "quotations.create",
         run: () => {
           setCommandOpen(false);
           router.push("/sales/quotations?action=new");
@@ -176,6 +184,7 @@ export function AppShell({ children }: PropsWithChildren) {
         section: "Creer",
         icon: Receipt,
         keywords: "creer facture invoice sales nouveau",
+        requiredPermission: "invoices.create",
         run: () => {
           setCommandOpen(false);
           router.push("/sales/invoices?action=new");
@@ -188,6 +197,7 @@ export function AppShell({ children }: PropsWithChildren) {
         section: "Creer",
         icon: Truck,
         keywords: "creer bon livraison delivery note sales nouveau",
+        requiredPermission: "delivery_notes.create",
         run: () => {
           setCommandOpen(false);
           router.push("/sales/delivery-notes?action=new");
@@ -200,14 +210,16 @@ export function AppShell({ children }: PropsWithChildren) {
         section: "Creer",
         icon: Hammer,
         keywords: "creer chantier project operations nouveau",
+        requiredPermission: "projects.create",
         run: () => {
           setCommandOpen(false);
           router.push("/operations/projects?action=new");
         },
       },
-    ],
-    [router],
-  );
+    ];
+
+    return items.filter((item) => permissions.has(item.requiredPermission));
+  }, [principal?.permissions, router]);
   const commandItems = useMemo<ShellCommand[]>(
     () => [
       ...navigationItems.map((item) => ({
@@ -343,9 +355,22 @@ export function AppShell({ children }: PropsWithChildren) {
             return;
           }
 
+          const requestedModule = getNavigationSections(locale)
+            .flatMap((section) => section.items)
+            .sort((left, right) => right.href.length - left.href.length)
+            .find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
+
+          if (requestedModule && !user.permissions.includes(requestedModule.requiredPermission)) {
+            const fallbackHref = getNavigationSections(locale, user.permissions)
+              .flatMap((section) => section.items)[0]?.href;
+            router.replace(fallbackHref ?? "/login");
+            return;
+          }
+
           setPrincipal({
             fullName: user.fullName,
             email: user.email,
+            permissions: user.permissions,
           });
           setAuthState("ready");
         }
@@ -362,7 +387,7 @@ export function AppShell({ children }: PropsWithChildren) {
     return () => {
       cancelled = true;
     };
-  }, [pathname, router]);
+  }, [locale, pathname, router]);
 
   function markNotificationRead(id: string) {
     setNotifications((current) =>

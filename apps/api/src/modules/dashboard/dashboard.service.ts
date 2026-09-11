@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { formatTnd as formatTndShared } from "@sotec/config";
+import { formatTndCompact } from "@sotec/config";
 import { DeliveryStatus, InvoiceStatus, LeadStatus, ProjectStatus, QuotationStatus } from "@sotec/database";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { WorkspaceService } from "../../common/workspace/workspace.service";
@@ -94,19 +94,38 @@ export class DashboardService {
       return followUpStatuses.includes(quotation.status) && daysUntilExpiry >= 0 && daysUntilExpiry <= 14;
     }).length;
 
-    const issuedInvoices = invoices.filter((invoice) => invoice.issueDate).slice(-6);
-    const monthlyPerformance = issuedInvoices.map((invoice) => {
-      const total = Number(invoice.totalAmount);
-      const paid = Number(invoice.paidAmount);
-      const revenue = total === 0 ? 0 : Math.min(100, Math.round((total / total) * 100));
-      const cashIn = total === 0 ? 0 : Math.min(100, Math.round((paid / total) * 100));
+    const monthlyBuckets = Array.from({ length: 6 }, (_, index) => {
+      const date = new Date();
+      date.setDate(1);
+      date.setHours(0, 0, 0, 0);
+      date.setMonth(date.getMonth() - (5 - index));
+      const year = date.getFullYear();
+      const month = date.getMonth();
+      const monthInvoices = invoices.filter(
+        (invoice) => invoice.issueDate.getFullYear() === year && invoice.issueDate.getMonth() === month,
+      );
       return {
-        month: new Intl.DateTimeFormat("en-US", { month: "short" }).format(invoice.issueDate),
-        revenue,
-        cashIn,
+        label: new Intl.DateTimeFormat("fr-FR", { month: "short" }).format(date),
+        total: monthInvoices.reduce((sum, invoice) => sum + Number(invoice.totalAmount), 0),
+        paid: monthInvoices.reduce((sum, invoice) => sum + Number(invoice.paidAmount), 0),
       };
     });
+    const maxMonthlyInvoiced = Math.max(0, ...monthlyBuckets.map((bucket) => bucket.total));
+    const monthlyPerformance = monthlyBuckets.map((bucket) => ({
+      month: bucket.label,
+      revenue: maxMonthlyInvoiced === 0 ? 0 : Math.round((bucket.total / maxMonthlyInvoiced) * 100),
+      cashIn: bucket.total === 0 ? 0 : Math.min(100, Math.round((bucket.paid / bucket.total) * 100)),
+    }));
 
+    const quotationStatusLabels: Record<QuotationStatus, string> = {
+      [QuotationStatus.DRAFT]: "Brouillon",
+      [QuotationStatus.SENT]: "Envoyé",
+      [QuotationStatus.UNDER_REVIEW]: "En négociation",
+      [QuotationStatus.ACCEPTED]: "Accepté",
+      [QuotationStatus.REJECTED]: "Refusé",
+      [QuotationStatus.EXPIRED]: "Expiré",
+      [QuotationStatus.CANCELLED]: "Annulé",
+    };
     const quotationStatus = [
       QuotationStatus.DRAFT,
       QuotationStatus.SENT,
@@ -114,26 +133,26 @@ export class DashboardService {
       QuotationStatus.ACCEPTED,
       QuotationStatus.REJECTED,
     ].map((status) => ({
-      label: status.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase()),
+      label: quotationStatusLabels[status],
       count: quotations.filter((quotation) => quotation.status === status).length,
     }));
 
     const projectPipeline = [
-      { stage: "Planned", count: projects.filter((project) => project.status === ProjectStatus.PLANNED).length, note: "Awaiting launch" },
-      { stage: "In progress", count: projects.filter((project) => project.status === ProjectStatus.IN_PROGRESS).length, note: "Workshop or site execution" },
-      { stage: "On hold", count: projects.filter((project) => project.status === ProjectStatus.ON_HOLD).length, note: "Blocked or pending approval" },
-      { stage: "Completed", count: projects.filter((project) => project.status === ProjectStatus.COMPLETED).length, note: "Delivered and closed" },
+      { stage: "Planifiés", count: projects.filter((project) => project.status === ProjectStatus.PLANNED).length, note: "En attente de lancement" },
+      { stage: "En cours", count: projects.filter((project) => project.status === ProjectStatus.IN_PROGRESS).length, note: "Fabrication, atelier ou chantier" },
+      { stage: "En attente", count: projects.filter((project) => project.status === ProjectStatus.ON_HOLD).length, note: "Bloqués ou en attente de validation" },
+      { stage: "Terminés", count: projects.filter((project) => project.status === ProjectStatus.COMPLETED).length, note: "Livrés et clôturés" },
     ];
 
-    const unpaidInvoices = invoices
-      .filter((invoice) => Number(invoice.balanceDue) > 0)
+    const allUnpaidInvoices = invoices.filter((invoice) => Number(invoice.balanceDue) > 0);
+    const unpaidInvoices = allUnpaidInvoices
       .slice(0, 4)
       .map((invoice) => ({
         number: invoice.number,
         client: invoice.client.displayName,
-        due: invoice.dueDate ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short" }).format(invoice.dueDate) : "-",
-        amount: formatTndShared(Number(invoice.balanceDue)),
-        status: invoice.status === InvoiceStatus.OVERDUE ? "Overdue" : "Open",
+        due: invoice.dueDate ? new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short" }).format(invoice.dueDate) : "—",
+        amount: formatTndCompact(Number(invoice.balanceDue)),
+        status: invoice.status === InvoiceStatus.OVERDUE ? "OVERDUE" : "OPEN",
       }));
 
     const reminders = [
@@ -141,51 +160,51 @@ export class DashboardService {
         .filter((lead) => lead.nextFollowUpAt)
         .slice(0, 2)
         .map((lead) => ({
-          title: `Follow up ${lead.fullName}`,
+          title: `Relancer ${lead.fullName}`,
           due: lead.nextFollowUpAt
-            ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short" }).format(lead.nextFollowUpAt)
-            : "-",
-          owner: "Sales",
+            ? new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short" }).format(lead.nextFollowUpAt)
+            : "—",
+          owner: "Commercial",
         })),
       ...invoices
         .filter((invoice) => invoice.status === InvoiceStatus.OVERDUE)
         .slice(0, 1)
         .map((invoice) => ({
-          title: `Collect ${invoice.number}`,
+          title: `Encaisser ${invoice.number}`,
           due: invoice.dueDate
-            ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short" }).format(invoice.dueDate)
-            : "-",
-          owner: "Accounting",
+            ? new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short" }).format(invoice.dueDate)
+            : "—",
+          owner: "Comptabilité",
         })),
     ];
 
     const activities = [
       ...quotations.slice(0, 2).map((quotation) => ({
-        title: `${quotation.number} ${quotation.status.replaceAll("_", " ").toLowerCase()}`,
+        title: `${quotation.number} · ${quotationStatusLabels[quotation.status] ?? quotation.status}`,
         time: this.relativeDate(quotation.updatedAt),
         type: "Commercial",
       })),
       ...invoices.slice(0, 2).map((invoice) => ({
-        title: `${invoice.number} ${invoice.status.replaceAll("_", " ").toLowerCase()}`,
+        title: `${invoice.number} · ${this.invoiceStatusLabel(invoice.status)}`,
         time: this.relativeDate(invoice.updatedAt),
         type: "Finance",
       })),
       ...deliveryNotes.slice(0, 1).map((note) => ({
-        title: `${note.number} ${note.status.replaceAll("_", " ").toLowerCase()}`,
+        title: `${note.number} · ${this.deliveryStatusLabel(note.status)}`,
         time: this.relativeDate(note.updatedAt),
-        type: "Logistics",
+        type: "Logistique",
       })),
     ].slice(0, 5);
 
     return {
       kpis: [
-        { label: "Open leads", value: String(openLeads), trend: `${leads.length} total leads`, tone: "warning" },
-        { label: "Accepted quotations", value: String(acceptedQuotations), trend: `${quotations.length} quotations`, tone: "positive" },
-        { label: "Active projects", value: String(activeProjects), trend: `${projects.length} total chantiers`, tone: "neutral" },
+        { label: "Prospects ouverts", value: String(openLeads), trend: `${leads.length} prospect(s) au total`, tone: "warning" },
+        { label: "Devis acceptés", value: String(acceptedQuotations), trend: `${quotations.length} devis au total`, tone: "positive" },
+        { label: "Chantiers actifs", value: String(activeProjects), trend: `${projects.length} chantier(s) au total`, tone: "neutral" },
         {
-          label: "Outstanding receivables",
-          value: formatTndShared(outstandingAmount),
-          trend: `${unpaidInvoices.length} invoices unpaid`,
+          label: "Reste à encaisser",
+          value: formatTndCompact(outstandingAmount),
+          trend: `${allUnpaidInvoices.length} facture(s) ouverte(s)`,
           tone: "warning",
         },
       ],
@@ -197,7 +216,7 @@ export class DashboardService {
         outstanding: this.formatMoney(outstandingAmount),
         overdueAmount: this.formatMoney(overdueAmount),
         overdueCount: overdueInvoices.length,
-        unpaidCount: invoices.filter((invoice) => Number(invoice.balanceDue) > 0).length,
+        unpaidCount: allUnpaidInvoices.length,
         preparedDeliveries: preparedDeliveryNotes,
         inTransitDeliveries: inTransitDeliveryNotes,
       },
@@ -215,7 +234,7 @@ export class DashboardService {
       unpaidInvoices,
       reminders,
       activities,
-      sections: ["sales pipeline", "execution health", "cash collection", "expense watch"],
+      sections: ["pipeline commercial", "suivi chantiers", "encaissements", "dépenses"],
     };
   }
 
@@ -237,15 +256,37 @@ export class DashboardService {
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
     if (diffHours < 1) {
       const diffMinutes = Math.max(1, Math.floor(diffMs / (1000 * 60)));
-      return `${diffMinutes} min ago`;
+      return `il y a ${diffMinutes} min`;
     }
     if (diffHours < 24) {
-      return `${diffHours}h ago`;
+      return `il y a ${diffHours} h`;
     }
-    return `${Math.floor(diffHours / 24)}d ago`;
+    return `il y a ${Math.floor(diffHours / 24)} j`;
+  }
+
+  private invoiceStatusLabel(status: InvoiceStatus) {
+    const labels: Partial<Record<InvoiceStatus, string>> = {
+      [InvoiceStatus.DRAFT]: "Brouillon",
+      [InvoiceStatus.ISSUED]: "Émise",
+      [InvoiceStatus.PARTIALLY_PAID]: "Partiellement réglée",
+      [InvoiceStatus.PAID]: "Réglée",
+      [InvoiceStatus.OVERDUE]: "En retard",
+      [InvoiceStatus.VOID]: "Annulée",
+    };
+    return labels[status] ?? status;
+  }
+
+  private deliveryStatusLabel(status: DeliveryStatus) {
+    const labels: Partial<Record<DeliveryStatus, string>> = {
+      [DeliveryStatus.PREPARED]: "Préparé",
+      [DeliveryStatus.IN_TRANSIT]: "En transit",
+      [DeliveryStatus.DELIVERED]: "Livré",
+      [DeliveryStatus.CANCELLED]: "Annulé",
+    };
+    return labels[status] ?? status;
   }
 
   private formatMoney(value: number) {
-    return formatTndShared(value);
+    return formatTndCompact(value);
   }
 }

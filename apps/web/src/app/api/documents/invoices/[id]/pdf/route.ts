@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { formatTnd } from "@sotec/config";
+import { formatTnd, parseTndInput } from "@sotec/config";
 import { renderInvoiceMarkupFromRecord } from "../../../../../../lib/server/document-templates";
 import { renderPdfBuffer } from "../../../../../../lib/server/pdf-renderer";
+import { authenticateServerRequest } from "../../../../../../lib/server/api-auth";
 import { prisma } from "../../../../../../lib/server/prisma";
 
 export const runtime = "nodejs";
@@ -122,7 +123,7 @@ async function getDocumentSettings(tenantId: string) {
     const rawValue = settingsByKey.get(key);
     if (typeof rawValue === "number" && Number.isFinite(rawValue)) return rawValue;
     if (typeof rawValue === "string") {
-      const parsed = Number.parseFloat(rawValue.replace(",", "."));
+      const parsed = parseTndInput(rawValue);
       if (Number.isFinite(parsed)) return parsed;
     }
     return fallback;
@@ -157,12 +158,22 @@ async function getDocumentSettings(tenantId: string) {
 }
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const principal = await authenticateServerRequest(request);
+  if (!principal) {
+    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+  }
+
+  if (!principal.permissions.includes("invoices.read")) {
+    return NextResponse.json({ error: "Permission denied." }, { status: 403 });
+  }
+
   const { id } = await context.params;
 
   try {
     const invoice = await prisma.invoice.findFirst({
       where: {
         id,
+        tenantId: principal.tenantId,
         deletedAt: null,
       },
       include: {
@@ -189,7 +200,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       totalAmount: formatMoney(invoice.totalAmount),
       paidAmount: formatMoney(invoice.paidAmount),
       balanceDue: formatMoney(invoice.balanceDue),
-      paymentTerms: settings.defaultPaymentTerms,
+      paymentTerms: invoice.paymentTerms?.trim() || settings.defaultPaymentTerms,
       scope: `Facture ${invoice.number}`,
       notes: invoice.customerNotes?.trim() || null,
       client: {

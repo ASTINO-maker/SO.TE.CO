@@ -336,7 +336,7 @@ export class AuthService {
     };
 
     return this.jwtService.signAsync(payload, {
-      secret: this.configService.get<string>("JWT_ACCESS_SECRET") ?? "change-me",
+      secret: this.configService.getOrThrow<string>("JWT_ACCESS_SECRET"),
       expiresIn: this.configService.get<string>("JWT_ACCESS_TTL") ?? ACCESS_TOKEN_TTL,
     });
   }

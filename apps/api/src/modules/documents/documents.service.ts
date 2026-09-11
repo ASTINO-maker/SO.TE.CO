@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { FileKind, FileVisibility, Prisma } from "@sotec/database";
@@ -84,7 +84,7 @@ export class DocumentsService {
         totalItems,
         totalPages: Math.max(1, Math.ceil(totalItems / pageSize)),
       },
-      storage: "S3-compatible object storage",
+      storage: "Local filesystem",
       attachableTo: ["lead", "client", "quotation", "project", "invoice", "delivery-note", "expense"],
     };
   }
@@ -245,8 +245,10 @@ export class DocumentsService {
     }
 
     const scope = await this.resolveScope(user);
-    const originalName = file.originalname.trim();
-    const extension = originalName.includes(".") ? originalName.split(".").pop()?.toLowerCase() : undefined;
+    const rawOriginalName = String(file.originalname ?? "").trim();
+    const originalName = rawOriginalName.slice(0, 255) || "document";
+    const rawExtension = originalName.includes(".") ? originalName.split(".").pop()?.toLowerCase() : undefined;
+    const extension = rawExtension && /^[a-z0-9]{1,12}$/u.test(rawExtension) ? rawExtension : undefined;
     const safeStem =
       originalName
         .replace(/\.[^.]+$/u, "")
@@ -256,49 +258,56 @@ export class DocumentsService {
         .slice(0, 80) || "document";
     const storageFileName = `${Date.now()}-${safeStem}${extension ? `.${extension}` : ""}`;
     const objectKey = `documents/${storageFileName}`;
-    await mkdir(join(this.resolveStorageRoot(), "documents"), { recursive: true });
-    await writeFile(this.resolveAbsolutePath(objectKey), file.buffer);
+    const absolutePath = this.resolveAbsolutePath(objectKey);
     const linkData = await this.resolveLinkTarget(scope.tenantId, payload.targetType, payload.targetReference);
 
-    const created = await this.prisma.file.create({
-      data: {
-        tenantId: scope.tenantId,
-        uploadedByUserId: scope.userId ?? undefined,
-        originalName,
-        objectKey,
-        storageDriver: "local",
-        mimeType: file.mimetype || "application/octet-stream",
-        extension,
-        byteSize: Math.max(1, file.size),
-        fileKind: payload.documentType,
-        visibility: payload.visibility ?? FileVisibility.INTERNAL,
-        documentLinks: linkData
-          ? {
-              create: {
-                tenantId: scope.tenantId,
-                createdByUserId: scope.userId ?? undefined,
-                label: payload.label?.trim() || undefined,
-                ...linkData,
-              },
-            }
-          : undefined,
-      },
-      include: {
-        uploadedBy: true,
-        documentLinks: {
-          include: {
-            client: true,
-            project: true,
-            quotation: true,
-            invoice: true,
-            deliveryNote: true,
-            expense: true,
+    await mkdir(join(this.resolveStorageRoot(), "documents"), { recursive: true });
+    await writeFile(absolutePath, file.buffer);
+
+    try {
+      const created = await this.prisma.file.create({
+        data: {
+          tenantId: scope.tenantId,
+          uploadedByUserId: scope.userId ?? undefined,
+          originalName,
+          objectKey,
+          storageDriver: "local",
+          mimeType: file.mimetype || "application/octet-stream",
+          extension,
+          byteSize: Math.max(1, Number(file.size) || file.buffer.length),
+          fileKind: payload.documentType,
+          visibility: payload.visibility ?? FileVisibility.INTERNAL,
+          documentLinks: linkData
+            ? {
+                create: {
+                  tenantId: scope.tenantId,
+                  createdByUserId: scope.userId ?? undefined,
+                  label: payload.label?.trim() || undefined,
+                  ...linkData,
+                },
+              }
+            : undefined,
+        },
+        include: {
+          uploadedBy: true,
+          documentLinks: {
+            include: {
+              client: true,
+              project: true,
+              quotation: true,
+              invoice: true,
+              deliveryNote: true,
+              expense: true,
+            },
           },
         },
-      },
-    });
+      });
 
-    return this.toDocumentRow(created);
+      return this.toDocumentRow(created);
+    } catch (error) {
+      await unlink(absolutePath).catch(() => undefined);
+      throw error;
+    }
   }
 
   async download(user: AuthenticatedUser | undefined, id: string) {
@@ -416,14 +425,14 @@ export class DocumentsService {
     deliveryNote?: { number: string } | null;
     expense?: { number: string | null; title: string } | null;
   } | null) {
-    if (!link) return "Unlinked";
-    if (link.project) return `Project ${link.project.code}`;
-    if (link.quotation) return `Quotation ${link.quotation.number}`;
-    if (link.invoice) return `Invoice ${link.invoice.number}`;
-    if (link.deliveryNote) return `Delivery ${link.deliveryNote.number}`;
+    if (!link) return "Non lie";
+    if (link.project) return `Chantier ${link.project.code}`;
+    if (link.quotation) return `Devis ${link.quotation.number}`;
+    if (link.invoice) return `Facture ${link.invoice.number}`;
+    if (link.deliveryNote) return `Bon livraison ${link.deliveryNote.number}`;
     if (link.client) return `Client ${link.client.code}`;
-    if (link.expense) return link.expense.number ? `Expense ${link.expense.number}` : `Expense ${link.expense.title}`;
-    return "Unlinked";
+    if (link.expense) return link.expense.number ? `Depense ${link.expense.number}` : `Depense ${link.expense.title}`;
+    return "Non lie";
   }
 
   private resolveTypeLabel(kind: FileKind, label?: string | null) {
@@ -460,7 +469,7 @@ export class DocumentsService {
       targetType: this.resolveTargetType(primaryLink),
       targetReference: this.resolveTargetReference(primaryLink),
       label: primaryLink?.label ?? "",
-      uploadedBy: file.uploadedBy ? `${file.uploadedBy.firstName} ${file.uploadedBy.lastName}`.trim() : "System",
+      uploadedBy: file.uploadedBy ? `${file.uploadedBy.firstName} ${file.uploadedBy.lastName}`.trim() : "Systeme",
       version: "v1",
       status: "ACTIVE",
       uploadedAt: file.createdAt.toISOString().slice(0, 16).replace("T", " "),

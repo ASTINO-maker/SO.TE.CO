@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { parseTndInput } from "@sotec/config";
 import { useEffect, useState } from "react";
 import {
   AlertTriangle,
@@ -171,7 +172,7 @@ export default function DashboardPage() {
               <div className="mt-4 h-3 overflow-hidden rounded-full bg-[#e7e0d2]">
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-[#1f9d72] via-[#3ab88c] to-[#8ad2b8]"
-                  style={{ width: `${Math.max(8, collectionRate)}%` }}
+                  style={{ width: `${collectionRate}%` }}
                 />
               </div>
               <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
@@ -292,6 +293,11 @@ export default function DashboardPage() {
           description="Les dossiers client qui pèsent le plus sur la trésorerie."
         >
           <div className="grid gap-3">
+            {data.unpaidInvoices.length === 0 ? (
+              <div className="rounded-[1.35rem] border border-[#e7dece] bg-[#fcf8f1] px-4 py-5 text-sm text-slate-500">
+                Aucune facture ouverte à relancer.
+              </div>
+            ) : null}
             {data.unpaidInvoices.map((invoice) => (
               <div
                 key={invoice.number}
@@ -306,12 +312,12 @@ export default function DashboardPage() {
                     variant="outline"
                     className={cn(
                       "rounded-full",
-                      invoice.status === "Overdue"
+                      invoice.status === "OVERDUE"
                         ? "border-rose-200 bg-rose-50 text-rose-700"
                         : "border-[#d8ccb7] bg-[#f8f2e8] text-slate-700",
                     )}
                   >
-                    {invoice.status === "Overdue" ? "En retard" : "Ouverte"}
+                    {invoice.status === "OVERDUE" ? "En retard" : "Ouverte"}
                   </Badge>
                 </div>
                 <div className="mt-4 flex items-center justify-between gap-4 text-sm">
@@ -359,6 +365,11 @@ export default function DashboardPage() {
           description="Les derniers mouvements commerciaux, facturation et logistique."
         >
           <div className="grid gap-3">
+            {data.activities.length === 0 ? (
+              <div className="rounded-[1.35rem] border border-[#e7dece] bg-[#fcf8f1] px-4 py-5 text-sm text-slate-500">
+                Aucune activité récente. Les prochains mouvements apparaîtront ici.
+              </div>
+            ) : null}
             {data.activities.map((item) => (
               <div
                 key={`${item.title}-${item.time}`}
@@ -367,7 +378,7 @@ export default function DashboardPage() {
                 <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f1e7d7] text-[#c45b2d]">
                   {item.type === "Finance" ? (
                     <Receipt className="h-4 w-4" />
-                  ) : item.type === "Logistics" ? (
+                  ) : item.type === "Logistique" ? (
                     <Truck className="h-4 w-4" />
                   ) : (
                     <FileText className="h-4 w-4" />
@@ -577,7 +588,7 @@ function buildCriticalActions(data: DashboardOverview) {
     {
       title: "Pression chantier",
       value: `${data.cashSnapshot.preparedDeliveries} bons préparés`,
-      hint: `${data.projectPipeline.find((item) => item.stage === "In progress")?.count ?? 0} chantier(s) en cours`,
+      hint: `${data.projectPipeline.find((item) => item.stage === "En cours")?.count ?? 0} chantier(s) en cours`,
       tone: "accent" as const,
     },
   ];
@@ -606,7 +617,7 @@ function getCollectionRate(collected: string, invoiced: string) {
 }
 
 function parseMoneyValue(value: string) {
-  return Number(value.replace(/[^\d.-]/g, "")) || 0;
+  return parseTndInput(value);
 }
 
 const toneTextClass: Record<Tone, string> = {

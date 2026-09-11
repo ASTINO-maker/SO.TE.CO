@@ -25,6 +25,7 @@ import { Card, CardContent } from "../ui/card";
 import { DialogShell } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
+import { formatTndCompact, parseTndInput } from "@sotec/config";
 import { apiClient } from "../../lib/api/client";
 import type { ApiError, PaginatedResponse } from "../../lib/api/types";
 import { cn } from "../../lib/utils";
@@ -289,7 +290,7 @@ export function ExpensesPageClient({
     null;
 
   const totalExpenseAmount = rows.reduce(
-    (sum, row) => sum + Number.parseFloat(parseAmountText(row.amount) || "0"),
+    (sum, row) => sum + parseTndInput(row.amount),
     0,
   );
   const pendingApprovalCount = rows.filter((row) => {
@@ -426,7 +427,7 @@ export function ExpensesPageClient({
               <SummaryCard label={text.projectLinked} value={String(projectLinkedCount)} icon={<FolderKanban className="h-4 w-4" />} />
               <SummaryCard
                 label={text.totalAmount}
-                value={`${new Intl.NumberFormat("fr-TN").format(totalExpenseAmount)} DT`}
+                value={formatTndCompact(totalExpenseAmount)}
                 tone="success"
                 icon={<Wallet className="h-4 w-4" />}
               />
@@ -821,7 +822,8 @@ function DetailBlock({
 }
 
 function parseAmountText(value: string) {
-  return value.replace(/\s+(?:TND|DT)$/i, "").replaceAll(",", "");
+  const parsed = parseTndInput(value);
+  return parsed ? String(parsed) : "";
 }
 
 function toExpenseStatusValue(value: string): ExpenseStatusValue {

@@ -19,7 +19,7 @@ export function SetupPageClient() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [passwordError, setPasswordError] = useState("");
   const [setupError, setSetupError] = useState("");
-  const [currentPassword, setCurrentPassword] = useState("ChangeMe123!");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [companyName, setCompanyName] = useState("SO.TE.CO");
@@ -86,8 +86,8 @@ export function SetupPageClient() {
     event.preventDefault();
     setPasswordError("");
 
-    if (newPassword.length < 8) {
-      setPasswordError("Utilisez un mot de passe d'au moins 8 caractères.");
+    if (newPassword.length < 12) {
+      setPasswordError("Utilisez un mot de passe d'au moins 12 caractères.");
       return;
     }
 
@@ -189,15 +189,15 @@ export function SetupPageClient() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="grid gap-2 sm:col-span-2">
                   <label className="text-sm font-medium text-slate-700">Mot de passe actuel</label>
-                  <Input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} className="h-12 rounded-2xl" />
+                  <Input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} className="h-12 rounded-2xl" />
                 </div>
                 <div className="grid gap-2">
                   <label className="text-sm font-medium text-slate-700">Nouveau mot de passe</label>
-                  <Input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} className="h-12 rounded-2xl" />
+                  <Input type="password" minLength={12} autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} className="h-12 rounded-2xl" />
                 </div>
                 <div className="grid gap-2">
                   <label className="text-sm font-medium text-slate-700">Confirmer le mot de passe</label>
-                  <Input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className="h-12 rounded-2xl" />
+                  <Input type="password" minLength={12} autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className="h-12 rounded-2xl" />
                 </div>
               </div>
 

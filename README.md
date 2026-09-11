@@ -1,74 +1,82 @@
 # SO.TE.CO ERP/CRM
 
-Production-oriented ERP/CRM foundation for a metal construction and custom fabrication company. The platform centralizes lead management, quotations, project execution, delivery, invoicing, payments, expenses, documents, and reporting in a SaaS-ready architecture.
+SO.TE.CO ERP/CRM is a multi-module business application for metal construction and project-based operations. It centralizes CRM, quotations, invoices, delivery notes, customer payments, expenses, projects, documents, users, roles and management dashboards in one workspace.
 
-## Target Stack
+## Architecture
 
-- `apps/web`: Next.js admin frontend
-- `apps/api`: NestJS modular API
-- `packages/database`: Prisma schema and database client
-- `packages/contracts`: shared types and domain contracts
-- `packages/config`: shared configuration helpers
-- `packages/ui`: shared UI building blocks
-- PostgreSQL, Redis, S3-compatible object storage
+- `apps/web` — Next.js 15 / React 19 web application
+- `apps/api` — NestJS API
+- `apps/desktop` — Electron Windows launcher and local-runtime packaging
+- `packages/database` — Prisma schema, migrations and database client
+- `packages/config` — shared configuration and Tunisian number/currency formatting
+- `packages/contracts` — shared domain contracts
+- `packages/ui` — shared UI building blocks
+- PostgreSQL — primary database
+- Local persistent storage or a future S3-compatible adapter — uploaded documents
 
-## Core Business Flow
-
-`Lead -> Client -> Quotation -> Approval -> Project -> Delivery Note -> Invoice -> Payment -> Completion`
-
-## Workspace Structure
+Core flow:
 
 ```text
-apps/
-  api/              NestJS API modules
-  web/              Next.js admin app
-docs/               Architecture, domain model, roadmap
-packages/
-  config/           Shared configuration
-  contracts/        Shared domain contracts
-  database/         Prisma schema and database access
-  tsconfig/         Shared TypeScript configuration
-  ui/               Shared UI primitives
+Prospect -> Client -> Devis -> Validation -> Chantier -> Bon de livraison -> Facture -> Paiement -> Cloture
 ```
 
-## Planned Modules
+## Requirements
 
-- CRM: leads, clients, contacts, activity history
-- Sales: quotations, invoices, delivery notes, payments
-- Operations: projects, status tracking, documents, execution visibility
-- Finance: expenses, receivables, dashboard metrics
-- Administration: users, roles, permissions, audit log
+- Node.js 22
+- pnpm 10
+- PostgreSQL 16+ (or Docker)
+- Chrome/Chromium for server-side PDF rendering
 
-## Local Development
+## Local development
 
-1. Copy `.env.example` to `.env`
-2. Start infrastructure with `docker compose up -d`
-3. Install dependencies with `pnpm install`
-4. Generate Prisma client with `pnpm db:generate`
-5. Run the workspace with `pnpm dev`
+```bash
+cp .env.example .env
+corepack enable
+pnpm install --frozen-lockfile
+pnpm db:generate
+pnpm db:migrate
+pnpm dev
+```
 
-## Local Customer Delivery
+Default development ports:
 
-For an owner-only local installation on one machine, use the dedicated guide:
+- Web: `http://localhost:3000`
+- API: `http://localhost:4000/api/v1`
+- API health: `http://localhost:4000/api/v1/health`
 
-- [docs/local-owner-setup.md](/Users/sadokamine/Desktop/Private/SO.TE.CO/docs/local-owner-setup.md)
+Set your own local `DEFAULT_OWNER_EMAIL`, `DEFAULT_OWNER_PASSWORD` and `JWT_ACCESS_SECRET` before first login. Production startup rejects placeholder/weak authentication values.
 
-Helper scripts:
+## Quality checks
 
-- [scripts/local-start.sh](/Users/sadokamine/Desktop/Private/SO.TE.CO/scripts/local-start.sh)
-- [scripts/local-stop.sh](/Users/sadokamine/Desktop/Private/SO.TE.CO/scripts/local-stop.sh)
-- [scripts/local-status.sh](/Users/sadokamine/Desktop/Private/SO.TE.CO/scripts/local-status.sh)
+```bash
+pnpm typecheck
+pnpm lint
+pnpm build
+```
 
-## Hosted Web Deployment
+Automated business tests are still a project gap and should be added before treating payment/invoice workflows as fully regression-protected. See `docs/PRODUCTION_AUDIT.md` for the latest audit and verification notes.
 
-For Railway hosting, use the dedicated deployment guide:
+## Deployment
 
-- [docs/railway-deployment.md](/Users/sadokamine/Desktop/Private/SO.TE.CO/docs/railway-deployment.md)
+Railway deployment instructions are in [`docs/railway-deployment.md`](docs/railway-deployment.md). VPS/Docker deployment instructions are in [`docs/web-deployment.md`](docs/web-deployment.md).
 
-For VPS/Docker hosting, use:
+For Railway document uploads, mount a persistent volume at `/app/storage`. Without persistent storage, uploaded files can disappear during redeploys.
 
-- [docs/web-deployment.md](/Users/sadokamine/Desktop/Private/SO.TE.CO/docs/web-deployment.md)
+## Desktop packaging
 
-## Current State
+The Electron app under `apps/desktop` packages the built web/API runtime for Windows. Build the complete installer from a machine with dependencies installed:
 
-This repository includes the initial architecture, database model, API module skeletons, and admin frontend shell. Business logic, authentication hardening, persistence wiring, and automated tests are the next implementation steps.
+```bash
+pnpm build:installer
+```
+
+Desktop-specific notes are in [`apps/desktop/README.md`](apps/desktop/README.md).
+
+## Security notes
+
+- Production requires a strong `JWT_ACCESS_SECRET` and owner password.
+- Swagger is disabled in production unless `ENABLE_SWAGGER=true`.
+- Browser/API CORS must use explicit origins in production; wildcard credentials are rejected.
+- Direct invoice/devis PDF routes verify the current API session, permission and tenant before reading data.
+- The generic PDF renderer requires an appropriate business-document permission and rejects active/unsafe markup schemes.
+- Refresh tokens are currently browser-managed tokens. Moving them to HttpOnly, Secure, SameSite cookies is recommended for further hardening.

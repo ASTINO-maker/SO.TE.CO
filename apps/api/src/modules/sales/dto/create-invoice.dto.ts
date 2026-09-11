@@ -9,6 +9,7 @@ import {
   IsString,
   MaxLength,
   Min,
+  MinLength,
   ValidateNested,
 } from "class-validator";
 
@@ -50,6 +51,8 @@ export class CreateInvoiceDto {
   dueDate?: string;
 
   @IsString()
+  @MinLength(1)
+  @MaxLength(240)
   paymentTerms!: string;
 
   @IsOptional()

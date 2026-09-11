@@ -25,6 +25,7 @@ import { Card, CardContent } from "../ui/card";
 import { DialogShell } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
+import { formatTndCompact, parseTndInput } from "@sotec/config";
 import { apiClient } from "../../lib/api/client";
 import type { ApiError, PaginatedResponse } from "../../lib/api/types";
 import { cn } from "../../lib/utils";
@@ -32,15 +33,35 @@ import { cn } from "../../lib/utils";
 interface PaymentRow {
   id: string;
   reference: string;
+  clientId: string;
   client: string;
   method: string;
   status: string;
   amount: string;
+  amountValue: number;
   allocations: string;
+  allocationDetails: Array<{
+    invoiceId: string;
+    invoiceNumber: string;
+    amountValue: number;
+    amount: string;
+  }>;
+  unallocatedAmountValue: number;
+  unallocatedAmount: string;
   paidAt: string;
   note?: string;
   project?: string;
   sourceReference?: string;
+}
+
+interface InvoiceOption {
+  id: string;
+  number: string;
+  clientId: string;
+  client: string;
+  remaining: string;
+  remainingValue: number;
+  status: string;
 }
 
 interface ClientOption {
@@ -96,6 +117,7 @@ export function PaymentsPageClient({
 }) {
   const router = useRouter();
   const [rows, setRows] = useState<PaymentRow[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceOption[]>([]);
   const [clients, setClients] = useState<ClientOption[]>([]);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,6 +129,10 @@ export function PaymentsPageClient({
   const [selectedId, setSelectedId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(null);
+  const [allocationInvoiceId, setAllocationInvoiceId] = useState("");
+  const [allocationAmount, setAllocationAmount] = useState("");
+  const [allocationBusy, setAllocationBusy] = useState(false);
+  const [allocationError, setAllocationError] = useState("");
   const [formError, setFormError] = useState("");
   const [form, setForm] = useState<PaymentFormState>(EMPTY_PAYMENT_FORM);
   const paymentDialogInitialRef = useRef<string | null>(null);
@@ -152,6 +178,14 @@ export function PaymentsPageClient({
     internalNote: "Note interne",
     pendingAllocations: "À affecter",
     linkedInvoice: "Facture liée",
+    remainingToAllocate: "Reste à affecter",
+    allocationAmount: "Montant à affecter",
+    chooseInvoice: "Choisir une facture",
+    allocate: "Affecter à la facture",
+    allocationSaved: "Affectation enregistrée.",
+    allocationRemoved: "Affectation retirée.",
+    removeAllocation: "Retirer",
+    noEligibleInvoice: "Aucune facture ouverte de ce client n'est disponible pour cette affectation.",
     recordTitle: "Nouveau paiement",
     recordDescription: "Ajoutez un encaissement et enregistrez-le immédiatement dans le registre financier.",
     editTitle: "Modifier le paiement",
@@ -208,15 +242,17 @@ export function PaymentsPageClient({
     setPageError("");
 
     try {
-      const [paymentsResponse, clientsResponse, projectsResponse] = await Promise.all([
+      const [paymentsResponse, clientsResponse, projectsResponse, invoicesResponse] = await Promise.all([
         apiClient.get<PaginatedResponse<PaymentRow>>("/sales/payments", { page: 1, pageSize: 80 }),
         apiClient.get<PaginatedResponse<{ id: string; name: string }>>("/crm/clients", { page: 1, pageSize: 80 }),
         apiClient.get<PaginatedResponse<{ id: string; title: string }>>("/projects", { page: 1, pageSize: 80 }),
+        apiClient.get<PaginatedResponse<InvoiceOption>>("/sales/invoices", { page: 1, pageSize: 100 }),
       ]);
 
       setRows(paymentsResponse.data);
       setClients(clientsResponse.data);
       setProjects(projectsResponse.data);
+      setInvoices(invoicesResponse.data);
       setSelectedId((current) => current || paymentsResponse.data[0]?.id || "");
       setForm((current) => ({
         ...current,
@@ -254,12 +290,12 @@ export function PaymentsPageClient({
       if (payment) {
         const nextForm = {
           client: payment.client,
-          project: payment.project === "General" ? "" : payment.project || "",
+          project: payment.project === "Sans chantier" ? "" : payment.project || "",
           method: toPaymentMethodValue(payment.method),
           status: toPaymentStatusValue(payment.status),
           amount: parseAmountText(payment.amount),
           paymentDate: payment.paidAt,
-          reference: payment.sourceReference === "-" ? "" : payment.sourceReference || "",
+          reference: payment.sourceReference === "—" ? "" : payment.sourceReference || "",
           note: payment.note || "",
         };
         setForm(nextForm);
@@ -297,7 +333,7 @@ export function PaymentsPageClient({
       const matchesStatus = statusFilter === "ALL" || normalizedStatus === statusFilter;
       const matchesFocus =
         filter === "unallocated"
-          ? row.allocations === "Pending allocation"
+          ? row.unallocatedAmountValue > 0.0005
           : filter === "today"
             ? row.paidAt === new Date().toISOString().slice(0, 10)
             : true;
@@ -313,14 +349,30 @@ export function PaymentsPageClient({
     rows[0] ??
     null;
 
+  const allocatableInvoices = useMemo(() => {
+    if (!selectedPayment) return [];
+    return invoices.filter(
+      (invoice) =>
+        invoice.clientId === selectedPayment.clientId &&
+        invoice.remainingValue > 0.0005 &&
+        !["PAID", "VOID", "CANCELLED"].includes(invoice.status),
+    );
+  }, [invoices, selectedPayment]);
+
+  useEffect(() => {
+    setAllocationInvoiceId("");
+    setAllocationAmount("");
+    setAllocationError("");
+  }, [selectedPayment?.id]);
+
   const totalConfirmedAmount = rows
     .filter((row) => {
       const normalized = toPaymentStatusValue(row.status);
       return normalized === "CONFIRMED" || normalized === "ALLOCATED" || normalized === "PARTIALLY_ALLOCATED";
     })
-    .reduce((sum, row) => sum + Number.parseFloat(parseAmountText(row.amount) || "0"), 0);
+    .reduce((sum, row) => sum + parseTndInput(row.amount), 0);
 
-  const unallocatedCount = rows.filter((row) => row.allocations === "Pending allocation").length;
+  const unallocatedCount = rows.filter((row) => row.unallocatedAmountValue > 0.0005).length;
   const attentionCount = rows.filter((row) => {
     const normalized = toPaymentStatusValue(row.status);
     return normalized === "PENDING" || normalized === "FAILED" || normalized === "CANCELLED";
@@ -336,12 +388,14 @@ export function PaymentsPageClient({
     setFormError("");
 
     try {
+      const editedPayment = action === "edit" && paymentId ? rows.find((row) => row.id === paymentId) : undefined;
+      const statusIsManaged = Boolean(editedPayment?.allocationDetails?.length);
       const payload = {
         client: form.client.trim(),
         project: form.project.trim() || undefined,
         method: form.method,
-        status: form.status,
-        amount: Number(form.amount),
+        ...(!statusIsManaged ? { status: form.status } : {}),
+        amount: parseTndInput(form.amount),
         paymentDate: new Date(form.paymentDate).toISOString(),
         reference: form.reference.trim() || undefined,
         note: form.note.trim() || undefined,
@@ -365,6 +419,65 @@ export function PaymentsPageClient({
       setFormError(getApiErrorMessage(error, text.failedSave));
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function refreshInvoices() {
+    const response = await apiClient.get<PaginatedResponse<InvoiceOption>>("/sales/invoices", {
+      page: 1,
+      pageSize: 100,
+    });
+    setInvoices(response.data);
+  }
+
+  async function handleAllocatePayment() {
+    if (!selectedPayment || !allocationInvoiceId) {
+      setAllocationError("Choisissez une facture à affecter.");
+      return;
+    }
+
+    const amount = parseTndInput(allocationAmount);
+    if (amount <= 0) {
+      setAllocationError("Saisissez un montant supérieur à zéro.");
+      return;
+    }
+
+    setAllocationBusy(true);
+    setAllocationError("");
+    try {
+      const updated = await apiClient.post<PaymentRow>(`/sales/payments/${selectedPayment.id}/allocations`, {
+        invoiceId: allocationInvoiceId,
+        amount,
+      });
+      setRows((current) => current.map((row) => (row.id === updated.id ? updated : row)));
+      setSelectedId(updated.id);
+      setAllocationAmount("");
+      setAllocationInvoiceId("");
+      await refreshInvoices();
+      setFeedback(text.allocationSaved);
+    } catch (error) {
+      setAllocationError(getApiErrorMessage(error, "Impossible d'affecter ce paiement à la facture."));
+    } finally {
+      setAllocationBusy(false);
+    }
+  }
+
+  async function handleRemoveAllocation(invoiceId: string) {
+    if (!selectedPayment || !window.confirm("Retirer cette affectation de la facture ?")) return;
+
+    setAllocationBusy(true);
+    setAllocationError("");
+    try {
+      const updated = await apiClient.del<PaymentRow>(
+        `/sales/payments/${selectedPayment.id}/allocations/${invoiceId}`,
+      );
+      setRows((current) => current.map((row) => (row.id === updated.id ? updated : row)));
+      await refreshInvoices();
+      setFeedback(text.allocationRemoved);
+    } catch (error) {
+      setAllocationError(getApiErrorMessage(error, "Impossible de retirer cette affectation."));
+    } finally {
+      setAllocationBusy(false);
     }
   }
 
@@ -453,7 +566,7 @@ export function PaymentsPageClient({
               <SummaryCard label={text.attentionCount} value={String(attentionCount)} tone="danger" icon={<ArrowRightLeft className="h-4 w-4" />} />
               <SummaryCard
                 label={text.confirmedAmount}
-                value={`${new Intl.NumberFormat("fr-TN").format(totalConfirmedAmount)} DT`}
+                value={formatTndCompact(totalConfirmedAmount)}
                 tone="success"
                 icon={<BadgeDollarSign className="h-4 w-4" />}
               />
@@ -542,7 +655,7 @@ export function PaymentsPageClient({
                   <div className="divide-y divide-black/6">
                     {filteredRows.map((payment) => {
                       const isActive = selectedPayment?.id === payment.id;
-                      const isPendingAllocation = payment.allocations === "Pending allocation";
+                      const isPendingAllocation = payment.unallocatedAmountValue > 0.0005;
 
                       return (
                         <div
@@ -574,7 +687,7 @@ export function PaymentsPageClient({
                               </div>
                               <p className="mt-2 text-sm font-medium text-slate-700">{payment.client}</p>
                               <p className="mt-1 text-sm text-slate-500">
-                                {payment.project && payment.project !== "General" ? payment.project : "Sans chantier"} · {payment.method}
+                                {payment.project || "Sans chantier"} · {paymentMethodLabel(payment.method)}
                               </p>
                             </div>
 
@@ -609,9 +722,9 @@ export function PaymentsPageClient({
 
                           <div className="grid gap-3 md:grid-cols-4">
                             <MiniInfo label={text.amount} value={payment.amount} emphasis />
-                            <MiniInfo label={text.allocations} value={payment.allocations === "Pending allocation" ? text.pendingAllocations : payment.allocations} />
+                            <MiniInfo label={text.allocations} value={payment.allocations === "À affecter" ? text.pendingAllocations : payment.allocations} />
                             <MiniInfo label={text.paidAt} value={payment.paidAt} />
-                            <MiniInfo label={text.externalRef} value={payment.sourceReference && payment.sourceReference !== "-" ? payment.sourceReference : "Non renseignée"} />
+                            <MiniInfo label={text.externalRef} value={payment.sourceReference && payment.sourceReference !== "—" ? payment.sourceReference : "Non renseignée"} />
                           </div>
                         </div>
                       );
@@ -653,9 +766,9 @@ export function PaymentsPageClient({
                     <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">{text.amount}</p>
                     <p className="mt-2 text-3xl font-semibold text-slate-900">{selectedPayment.amount}</p>
                     <p className="mt-2 text-sm text-slate-500">
-                      {selectedPayment.allocations === "Pending allocation"
-                        ? "Ce paiement reste à rattacher à une facture."
-                        : `Paiement déjà lié à ${selectedPayment.allocations}.`}
+                      {selectedPayment.unallocatedAmountValue > 0.0005
+                        ? `${selectedPayment.unallocatedAmount} reste à affecter.`
+                        : `Paiement entièrement affecté à ${selectedPayment.allocations}.`}
                     </p>
                   </div>
 
@@ -683,26 +796,103 @@ export function PaymentsPageClient({
                     items={[
                       { icon: <Receipt className="h-4 w-4 text-slate-400" />, label: text.internalRef, value: selectedPayment.reference },
                       { icon: <Wallet className="h-4 w-4 text-slate-400" />, label: text.client, value: selectedPayment.client },
-                      { icon: <Landmark className="h-4 w-4 text-slate-400" />, label: text.method, value: selectedPayment.method },
+                      { icon: <Landmark className="h-4 w-4 text-slate-400" />, label: text.method, value: paymentMethodLabel(selectedPayment.method) },
                       { icon: <CalendarDays className="h-4 w-4 text-slate-400" />, label: text.paidAt, value: selectedPayment.paidAt },
                       {
                         icon: <ArrowRightLeft className="h-4 w-4 text-slate-400" />,
                         label: text.project,
-                        value: selectedPayment.project && selectedPayment.project !== "General" ? selectedPayment.project : "Sans chantier",
+                        value: selectedPayment.project || "Sans chantier",
                       },
                       {
                         icon: <BadgeDollarSign className="h-4 w-4 text-slate-400" />,
                         label: text.externalRef,
-                        value: selectedPayment.sourceReference && selectedPayment.sourceReference !== "-" ? selectedPayment.sourceReference : "Non renseignée",
+                        value: selectedPayment.sourceReference && selectedPayment.sourceReference !== "—" ? selectedPayment.sourceReference : "Non renseignée",
                       },
                     ]}
                   />
 
                   <div className="rounded-2xl border border-black/6 bg-[#fcfbf8] p-5">
-                    <p className="text-sm font-semibold text-slate-900">{text.linkedInvoice}</p>
-                    <p className="mt-3 text-sm text-slate-700">
-                      {selectedPayment.allocations === "Pending allocation" ? text.pendingAllocations : selectedPayment.allocations}
-                    </p>
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-slate-900">{text.linkedInvoice}</p>
+                      <span className="text-xs font-semibold text-slate-500">
+                        {text.remainingToAllocate}: {selectedPayment.unallocatedAmount}
+                      </span>
+                    </div>
+
+                    {selectedPayment.allocationDetails.length ? (
+                      <div className="mt-4 grid gap-2">
+                        {selectedPayment.allocationDetails.map((allocation) => (
+                          <div
+                            key={allocation.invoiceId}
+                            className="flex items-center justify-between gap-3 rounded-xl border border-black/6 bg-white px-3 py-3"
+                          >
+                            <div>
+                              <p className="text-sm font-semibold text-slate-800">{allocation.invoiceNumber}</p>
+                              <p className="mt-1 text-xs text-slate-500">{allocation.amount}</p>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-8 rounded-xl px-2.5 text-xs text-rose-700 hover:text-rose-800"
+                              disabled={allocationBusy}
+                              onClick={() => void handleRemoveAllocation(allocation.invoiceId)}
+                            >
+                              {text.removeAllocation}
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-3 text-sm text-slate-600">{text.pendingAllocations}</p>
+                    )}
+
+                    {selectedPayment.unallocatedAmountValue > 0.0005 &&
+                    ["CONFIRMED", "PARTIALLY_ALLOCATED", "ALLOCATED"].includes(
+                      toPaymentStatusValue(selectedPayment.status),
+                    ) ? (
+                      <div className="mt-5 grid gap-3 border-t border-black/6 pt-4">
+                        {allocatableInvoices.length ? (
+                          <>
+                            <FormField label={text.chooseInvoice}>
+                              <select
+                                value={allocationInvoiceId}
+                                onChange={(event) => setAllocationInvoiceId(event.target.value)}
+                                className="flex h-10 w-full rounded-md border border-input bg-white px-3 text-sm"
+                              >
+                                <option value="">{text.chooseInvoice}</option>
+                                {allocatableInvoices.map((invoice) => (
+                                  <option key={invoice.id} value={invoice.id}>
+                                    {invoice.number} · reste {invoice.remaining}
+                                  </option>
+                                ))}
+                              </select>
+                            </FormField>
+                            <FormField label={text.allocationAmount}>
+                              <Input
+                                inputMode="decimal"
+                                value={allocationAmount}
+                                onChange={(event) => setAllocationAmount(event.target.value)}
+                                placeholder={selectedPayment.unallocatedAmount.replace(/\s*TND$/i, "")}
+                              />
+                            </FormField>
+                            {allocationError ? (
+                              <p className="text-sm text-rose-700">{allocationError}</p>
+                            ) : null}
+                            <Button
+                              type="button"
+                              className="rounded-xl bg-[#2f4156] hover:bg-[#253548]"
+                              disabled={allocationBusy}
+                              onClick={() => void handleAllocatePayment()}
+                            >
+                              <ArrowRightLeft className="h-4 w-4" />
+                              {allocationBusy ? text.saving : text.allocate}
+                            </Button>
+                          </>
+                        ) : (
+                          <p className="text-sm leading-6 text-slate-500">{text.noEligibleInvoice}</p>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="rounded-2xl border border-black/6 bg-[#fcfbf8] p-5">
@@ -783,11 +973,19 @@ export function PaymentsPageClient({
               <select
                 value={form.status}
                 onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as PaymentStatusValue }))}
+                disabled={
+                  action === "edit" &&
+                  Boolean(paymentId && rows.find((row) => row.id === paymentId)?.allocationDetails?.length)
+                }
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
               >
                 <option value="CONFIRMED">Confirmé</option>
-                <option value="PARTIALLY_ALLOCATED">Partiellement affecté</option>
-                <option value="ALLOCATED">Affecté</option>
+                {action === "edit" && form.status === "PARTIALLY_ALLOCATED" ? (
+                  <option value="PARTIALLY_ALLOCATED">Partiellement affecté (automatique)</option>
+                ) : null}
+                {action === "edit" && form.status === "ALLOCATED" ? (
+                  <option value="ALLOCATED">Affecté (automatique)</option>
+                ) : null}
                 <option value="PENDING">En attente</option>
                 <option value="FAILED">Échec</option>
                 <option value="REFUNDED">Remboursé</option>
@@ -925,7 +1123,17 @@ function DetailBlock({
 }
 
 function parseAmountText(value: string) {
-  return value.replace(/\s+(?:TND|DT)$/i, "").replaceAll(",", "");
+  const parsed = parseTndInput(value);
+  return parsed ? String(parsed).replace(".", ",") : "";
+}
+
+function paymentMethodLabel(value: string) {
+  const method = toPaymentMethodValue(value);
+  if (method === "BANK_TRANSFER") return "Virement bancaire";
+  if (method === "CHECK") return "Chèque";
+  if (method === "CASH") return "Espèces";
+  if (method === "CARD") return "Carte";
+  return "Autre";
 }
 
 function toPaymentMethodValue(value: string): PaymentMethodValue {

@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { formatTnd } from "@sotec/config";
+import { formatTndCompact } from "@sotec/config";
 import { Prisma, ProjectStatus } from "@sotec/database";
 import { ListQueryDto } from "../../common/dto/list-query.dto";
 import { PrismaService } from "../../common/prisma/prisma.service";
@@ -395,7 +395,7 @@ export class ProjectsService {
   }
 
   private formatCompactMoney(value: Prisma.Decimal | number | string) {
-    return formatTnd(Number(value));
+    return formatTndCompact(Number(value));
   }
 
   private formatDate(value: Date) {

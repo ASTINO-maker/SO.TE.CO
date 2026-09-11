@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CheckCheck, Download, Eye, Pencil, Plus, Printer, Search, SlidersHorizontal, Trash2, Truck } from "lucide-react";
-import { formatTnd, formatTnQuantity } from "@sotec/config";
+import { formatTndCompact, formatTnQuantity, parseTndInput } from "@sotec/config";
 import { apiClient } from "../../lib/api/client";
 import type { ApiError, PaginatedResponse } from "../../lib/api/types";
 import { renderInvoiceMarkupFromRecord } from "../../lib/server/document-templates";
@@ -133,11 +133,12 @@ type InvoiceLineErrors = Record<
 type DeliveryDraftErrors = Partial<Record<"itemsNote", string>>;
 
 function createDefaultInvoiceForm(client = "", project = ""): InvoiceFormState {
+  const issueDate = currentInvoiceDateInputValue();
   return {
     origin: "Quotation",
     client,
-    issueDate: "",
-    dueDate: "",
+    issueDate,
+    dueDate: buildInvoiceDueDate(issueDate),
     paymentTerms: "Virement bancaire - 30 jours",
     noteMode: "simple",
     note: "",
@@ -168,8 +169,7 @@ function createEmptyDeliveryDraft(project = "", client = ""): DeliveryNoteDraftS
 
 function createDefaultInvoiceDraftLines() {
   return [
-    { id: "draft-line-1", description: "Pergola fabrication", quantity: "1", unit: "u", unitPrice: "8400" },
-    { id: "draft-line-2", description: "Installation", quantity: "1", unit: "u", unitPrice: "2400" },
+    { id: "draft-line-1", description: "", quantity: "1", unit: "u", unitPrice: "" },
   ];
 }
 
@@ -452,8 +452,8 @@ export function InvoicesWorkspace() {
     const nextInvoiceForm: InvoiceFormState = {
       origin: "Manual invoice",
       client: invoice.client,
-      issueDate: toDateInputValue(invoice.date, "2026-04-01"),
-      dueDate: toDateInputValue(invoice.dueDate, buildInvoiceDueDate(toDateInputValue(invoice.date, "2026-04-01"))),
+      issueDate: toDateInputValue(invoice.date, ""),
+      dueDate: toDateInputValue(invoice.dueDate, buildInvoiceDueDate(toDateInputValue(invoice.date, ""))),
       paymentTerms: invoice.paymentTerms || "Virement bancaire - 30 jours",
       noteMode: "simple",
       note: invoice.scope,
@@ -1355,7 +1355,7 @@ export function InvoicesWorkspace() {
                             aria-invalid={Boolean(lineErrors[line.id]?.unitPrice)}
                             value={line.unitPrice}
                             onChange={(event) => updateDraftLine(line.id, "unitPrice", event.target.value)}
-                            placeholder="0"
+                            placeholder="0,000"
                           />
                           {lineErrors[line.id]?.unitPrice ? (
                             <p className="text-xs font-medium text-rose-600">{lineErrors[line.id]?.unitPrice}</p>
@@ -1466,7 +1466,7 @@ export function InvoicesWorkspace() {
                       className="h-11 rounded-xl"
                       value={invoiceForm.deliveryResponsible}
                       onChange={(event) => setInvoiceForm((current) => ({ ...current, deliveryResponsible: event.target.value }))}
-                      placeholder="Karim H."
+                      placeholder="Nom du livreur"
                     />
                   </FormField>
                   <FormField label="Véhicule">
@@ -1474,7 +1474,7 @@ export function InvoicesWorkspace() {
                       className="h-11 rounded-xl"
                       value={invoiceForm.deliveryVehicle}
                       onChange={(event) => setInvoiceForm((current) => ({ ...current, deliveryVehicle: event.target.value }))}
-                      placeholder="Iveco Daily - 198 TN 445"
+                      placeholder="Véhicule / immatriculation"
                     />
                   </FormField>
                   <FormField label="Date et heure prévues (optionnel)">
@@ -1688,7 +1688,7 @@ function getApiErrorMessage(error: unknown, fallback: string) {
 
 function formatFormalDocumentDate(value: string) {
   if (!value) {
-    return "01/04/2026";
+    return "—";
   }
 
   const nativeDate = value.includes("T") ? new Date(value) : value.includes("-") ? new Date(`${value}T00:00:00`) : new Date(value);
@@ -1703,6 +1703,14 @@ function formatFormalDocumentDate(value: string) {
   });
 }
 
+function currentInvoiceDateInputValue() {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function buildInvoiceDueDate(issueDate: string) {
   if (!issueDate) {
     return "";
@@ -1710,7 +1718,7 @@ function buildInvoiceDueDate(issueDate: string) {
 
   const nativeDate = new Date(`${issueDate}T00:00:00`);
   if (Number.isNaN(nativeDate.getTime())) {
-    return "2026-05-01";
+    return "";
   }
 
   nativeDate.setDate(nativeDate.getDate() + 30);
@@ -1734,36 +1742,11 @@ function formatInvoiceOriginLabel(value: InvoiceFormState["origin"] | string) {
 }
 
 function parseDraftNumber(value: string | number) {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
-  }
-
-  const sanitized = value.replace(/[^\d,.-]/g, "").trim();
-  if (!sanitized) {
-    return 0;
-  }
-
-  const hasComma = sanitized.includes(",");
-  const hasDot = sanitized.includes(".");
-  let normalized = sanitized;
-
-  if (hasComma && hasDot) {
-    normalized =
-      sanitized.lastIndexOf(",") > sanitized.lastIndexOf(".")
-        ? sanitized.replace(/\./g, "").replace(",", ".")
-        : sanitized.replace(/,/g, "");
-  } else if (hasComma) {
-    normalized = /^-?\d{1,3}(,\d{3})+$/.test(sanitized)
-      ? sanitized.replace(/,/g, "")
-      : sanitized.replace(",", ".");
-  }
-
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return parseTndInput(value);
 }
 
 function formatDraftTnd(value: number) {
-  return formatTnd(value);
+  return formatTndCompact(value);
 }
 
 function extractInvoiceUnitFromQuantityLabel(quantityLabel: string | undefined): string {
@@ -1782,7 +1765,7 @@ function isZeroAmount(value: string | number) {
 
 function formatInvoiceDate(value: string) {
   if (!value) {
-    return "1 avr. 2026";
+    return "—";
   }
 
   const date = value.includes("T") ? new Date(value) : new Date(`${value}T00:00:00`);

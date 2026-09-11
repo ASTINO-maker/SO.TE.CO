@@ -1,5 +1,5 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
-import { formatTnd, formatTnQuantity } from "@sotec/config";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { formatTndCompact, formatTnQuantity, parseTndInput } from "@sotec/config";
 import {
   DeliveryStatus,
   InvoiceStatus,
@@ -29,6 +29,7 @@ import { UpdateInvoiceDto } from "./dto/update-invoice.dto";
 import { UpdatePaymentDto } from "./dto/update-payment.dto";
 import { UpdateQuotationDto } from "./dto/update-quotation.dto";
 import { UpdateDeliveryNoteDto } from "./dto/update-delivery-note.dto";
+import { AllocatePaymentDto } from "./dto/allocate-payment.dto";
 
 /**
  * Retry helper for create flows that depend on a freshly-computed sequential
@@ -137,6 +138,9 @@ export class SalesService {
     const client = await this.findClientByName(scope.tenantId, payload.client);
     const issueDate = payload.issueDate ? new Date(payload.issueDate) : new Date();
     const validUntil = payload.validUntil ? new Date(payload.validUntil) : null;
+    if (validUntil && validUntil.getTime() < issueDate.getTime()) {
+      throw new BadRequestException("La date de validite du devis doit etre posterieure a sa date d'emission.");
+    }
     const chantierTitle = payload.chantier?.trim() || "Chantier à définir";
     const scopeText = payload.scope?.trim() || "";
     const customLines = (payload.lines ?? [])
@@ -248,6 +252,12 @@ export class SalesService {
       throw new NotFoundException("Quotation not found");
     }
 
+    const nextQuotationIssueDate = payload.issueDate ? new Date(payload.issueDate) : existing.issueDate;
+    const nextQuotationValidUntil = payload.validUntil ? new Date(payload.validUntil) : existing.validUntil;
+    if (nextQuotationValidUntil && nextQuotationValidUntil.getTime() < nextQuotationIssueDate.getTime()) {
+      throw new BadRequestException("La date de validite du devis doit etre posterieure a sa date d'emission.");
+    }
+
     const client = payload.client ? await this.findClientByName(scope.tenantId, payload.client) : null;
     const validLines = payload.lines
       ? payload.lines
@@ -262,7 +272,7 @@ export class SalesService {
       : null;
 
     if (payload.lines && (!validLines || !validLines.length)) {
-      throw new NotFoundException("At least one quotation line is required");
+      throw new BadRequestException("At least one quotation line is required");
     }
 
     const updated = await this.prisma.quotation.update({
@@ -367,6 +377,9 @@ export class SalesService {
     const client = await this.findClientByName(scope.tenantId, payload.client);
     const issueDate = payload.issueDate ? new Date(payload.issueDate) : new Date();
     const dueDate = payload.dueDate ? new Date(payload.dueDate) : null;
+    if (dueDate && dueDate.getTime() < issueDate.getTime()) {
+      throw new BadRequestException("La date d'echeance doit etre posterieure a la date d'emission de la facture.");
+    }
     const validLines = payload.lines
       .map((line) => ({
         label: line.description.trim(),
@@ -378,7 +391,7 @@ export class SalesService {
       .filter((line) => line.label && line.unitPriceValue > 0 && line.quantityValue > 0);
 
     if (!validLines.length) {
-      throw new NotFoundException("At least one invoice line is required");
+      throw new BadRequestException("At least one invoice line is required");
     }
 
     const totalAmount = validLines.reduce((sum, line) => sum + line.totalValue, 0);
@@ -399,6 +412,7 @@ export class SalesService {
         totalAmount: new Prisma.Decimal(totalAmount),
         paidAmount: new Prisma.Decimal(0),
         balanceDue: new Prisma.Decimal(totalAmount),
+        paymentTerms: payload.paymentTerms.trim(),
         customerNotes: payload.note?.trim() || undefined,
         internalNotes: payload.origin.trim(),
         items: {
@@ -476,6 +490,12 @@ export class SalesService {
       throw new NotFoundException("Invoice not found");
     }
 
+    const nextInvoiceIssueDate = payload.issueDate ? new Date(payload.issueDate) : existing.issueDate;
+    const nextInvoiceDueDate = payload.dueDate ? new Date(payload.dueDate) : existing.dueDate;
+    if (nextInvoiceDueDate && nextInvoiceDueDate.getTime() < nextInvoiceIssueDate.getTime()) {
+      throw new BadRequestException("La date d'echeance doit etre posterieure a la date d'emission de la facture.");
+    }
+
     const client = payload.client ? await this.findClientByName(scope.tenantId, payload.client) : null;
     const validLines = payload.lines
       ? payload.lines
@@ -490,14 +510,49 @@ export class SalesService {
       : null;
 
     if (payload.lines && (!validLines || !validLines.length)) {
-      throw new NotFoundException("At least one invoice line is required");
+      throw new BadRequestException("At least one invoice line is required");
     }
 
     const nextTotal = validLines
       ? validLines.reduce((sum, line) => sum + line.totalValue, 0)
       : this.decimalToNumber(existing.totalAmount);
     const paidAmount = this.decimalToNumber(existing.paidAmount);
+
+    if (nextTotal + 0.0005 < paidAmount) {
+      throw new BadRequestException(
+        "Le total de la facture ne peut pas etre inferieur au montant deja regle.",
+      );
+    }
+
+    const hasAllocatedPayments =
+      paidAmount > 0 ||
+      (await this.prisma.paymentAllocation.count({
+        where: {
+          tenantId: scope.tenantId,
+          invoiceId: existing.id,
+        },
+      })) > 0;
+
+    if (client && client.id !== existing.clientId && hasAllocatedPayments) {
+      throw new BadRequestException(
+        "Impossible de changer le client d'une facture qui contient deja des reglements affectes.",
+      );
+    }
+
     const nextBalanceDue = Math.max(0, nextTotal - paidAmount);
+    const shouldRecalculateInvoiceStatus = Boolean(validLines || payload.issueDate || payload.dueDate);
+    const nextPaymentStatus =
+      !shouldRecalculateInvoiceStatus ||
+      existing.status === InvoiceStatus.VOID ||
+      existing.status === InvoiceStatus.CANCELLED
+      ? existing.status
+      : paidAmount >= nextTotal - 0.0005 && paidAmount > 0
+        ? InvoiceStatus.PAID
+        : nextInvoiceDueDate && nextInvoiceDueDate.getTime() < Date.now()
+          ? InvoiceStatus.OVERDUE
+          : paidAmount > 0
+            ? InvoiceStatus.PARTIALLY_PAID
+            : InvoiceStatus.ISSUED;
 
     const updated = await this.prisma.invoice.update({
       where: {
@@ -507,6 +562,7 @@ export class SalesService {
         ...(client ? { clientId: client.id } : {}),
         ...(payload.issueDate ? { issueDate: new Date(payload.issueDate) } : {}),
         ...(payload.dueDate ? { dueDate: new Date(payload.dueDate) } : {}),
+        ...(payload.paymentTerms !== undefined ? { paymentTerms: payload.paymentTerms.trim() } : {}),
         ...(payload.note !== undefined ? { customerNotes: payload.note?.trim() || null } : {}),
         ...(payload.origin !== undefined ? { internalNotes: payload.origin.trim() } : {}),
         ...(validLines
@@ -514,6 +570,12 @@ export class SalesService {
               subtotalAmount: new Prisma.Decimal(nextTotal),
               totalAmount: new Prisma.Decimal(nextTotal),
               balanceDue: new Prisma.Decimal(nextBalanceDue),
+              status: nextPaymentStatus,
+              ...(nextPaymentStatus === InvoiceStatus.PAID
+                ? { paidAt: existing.paidAt ?? new Date() }
+                : paidAmount > 0
+                  ? { paidAt: null }
+                  : {}),
               items: {
                 deleteMany: {},
                 create: validLines.map((line, index) => ({
@@ -546,20 +608,41 @@ export class SalesService {
 
   async deleteInvoice(user: AuthenticatedUser | undefined, id: string) {
     const scope = await this.resolveScope(user);
-    const result = await this.prisma.invoice.updateMany({
+    const invoice = await this.prisma.invoice.findFirst({
       where: {
         id,
         tenantId: scope.tenantId,
         deletedAt: null,
       },
+      select: {
+        id: true,
+        paidAmount: true,
+        _count: {
+          select: {
+            paymentAllocations: true,
+          },
+        },
+      },
+    });
+
+    if (!invoice) {
+      throw new NotFoundException("Invoice not found");
+    }
+
+    if (this.decimalToNumber(invoice.paidAmount) > 0 || invoice._count.paymentAllocations > 0) {
+      throw new BadRequestException(
+        "Une facture avec des reglements ne peut pas etre supprimee. Annulez ou reaffectez d'abord les reglements.",
+      );
+    }
+
+    await this.prisma.invoice.update({
+      where: {
+        id: invoice.id,
+      },
       data: {
         deletedAt: new Date(),
       },
     });
-
-    if (!result.count) {
-      throw new NotFoundException("Invoice not found");
-    }
 
     return { success: true };
   }
@@ -645,7 +728,7 @@ export class SalesService {
       .map((line, index) => {
         const match = line.match(/(.+?)\sx(.+)$/u);
         const quantityRaw = match?.[2]?.trim() || "1";
-        const quantityValue = Number.parseFloat(quantityRaw.replace(/[^\d.,-]/g, "").replace(",", "."));
+        const quantityValue = parseTndInput(quantityRaw);
         return {
           sortOrder: index + 1,
           itemName: (match?.[1]?.trim() || line).trim(),
@@ -656,7 +739,7 @@ export class SalesService {
       });
 
     if (!items.length) {
-      throw new NotFoundException("At least one delivery item is required");
+      throw new BadRequestException("At least one delivery item is required");
     }
 
     const note = await withNumberingRetry(async () => {
@@ -781,7 +864,7 @@ export class SalesService {
           .map((line, index) => {
             const match = line.match(/(.+?)\sx(.+)$/u);
             const quantityRaw = match?.[2]?.trim() || "1";
-            const quantityValue = Number.parseFloat(quantityRaw.replace(/[^\d.,-]/g, "").replace(",", "."));
+            const quantityValue = parseTndInput(quantityRaw);
             return {
               sortOrder: index + 1,
               itemName: (match?.[1]?.trim() || line).trim(),
@@ -792,7 +875,7 @@ export class SalesService {
       : null;
 
     if (payload.itemsNote && (!items || !items.length)) {
-      throw new NotFoundException("At least one delivery item is required");
+      throw new BadRequestException("At least one delivery item is required");
     }
 
     const projectUpdate = project
@@ -922,6 +1005,9 @@ export class SalesService {
 
   async createPayment(user: AuthenticatedUser | undefined, payload: CreatePaymentDto) {
     const scope = await this.resolveScope(user);
+    if (payload.status === PaymentStatus.ALLOCATED || payload.status === PaymentStatus.PARTIALLY_ALLOCATED) {
+      throw new BadRequestException("Le statut d'affectation est calculé automatiquement.");
+    }
     const client = await this.findClientByName(scope.tenantId, payload.client);
     const project = payload.project?.trim()
       ? await this.prisma.project.findFirst({
@@ -981,6 +1067,24 @@ export class SalesService {
       throw new NotFoundException("Payment not found");
     }
 
+    if (payload.status === PaymentStatus.ALLOCATED || payload.status === PaymentStatus.PARTIALLY_ALLOCATED) {
+      throw new BadRequestException("Le statut d'affectation est calculé automatiquement.");
+    }
+
+    const allocationAggregate = await this.prisma.paymentAllocation.aggregate({
+      where: { paymentId: existing.id, tenantId: scope.tenantId },
+      _sum: { amount: true },
+    });
+    const allocatedAmount = this.decimalToNumber(allocationAggregate._sum.amount);
+    if (payload.amount !== undefined && payload.amount + 0.0005 < allocatedAmount) {
+      throw new BadRequestException("Le montant du paiement ne peut pas être inférieur au montant déjà affecté.");
+    }
+    if (allocatedAmount > 0.0005 && payload.status !== undefined) {
+      throw new BadRequestException(
+        "Le statut d'un paiement déjà affecté est calculé automatiquement. Retirez d'abord ses affectations pour le modifier.",
+      );
+    }
+
     const client = payload.client ? await this.findClientByName(scope.tenantId, payload.client) : null;
     const projectLabel = payload.project?.trim();
     const project =
@@ -999,6 +1103,19 @@ export class SalesService {
     if (payload.project !== undefined && projectLabel && !project) {
       throw new NotFoundException("Project not found");
     }
+    if (client && allocatedAmount > 0 && client.id !== existing.clientId) {
+      throw new BadRequestException("Retirez d'abord les affectations avant de changer le client du paiement.");
+    }
+
+    const nextPaymentAmount = this.roundTnd(
+      payload.amount !== undefined ? payload.amount : this.decimalToNumber(existing.amount),
+    );
+    const nextManagedStatus =
+      allocatedAmount <= 0.0005
+        ? undefined
+        : nextPaymentAmount - allocatedAmount <= 0.0005
+          ? PaymentStatus.ALLOCATED
+          : PaymentStatus.PARTIALLY_ALLOCATED;
 
     const payment = await this.prisma.payment.update({
       where: {
@@ -1008,7 +1125,11 @@ export class SalesService {
         ...(client ? { clientId: client.id } : {}),
         ...(payload.project !== undefined ? { projectId: project?.id ?? null } : {}),
         ...(payload.method !== undefined ? { method: payload.method } : {}),
-        ...(payload.status !== undefined ? { status: payload.status } : {}),
+        ...(nextManagedStatus !== undefined
+          ? { status: nextManagedStatus }
+          : payload.status !== undefined
+            ? { status: payload.status }
+            : {}),
         ...(payload.amount !== undefined ? { amount: new Prisma.Decimal(payload.amount) } : {}),
         ...(payload.paymentDate !== undefined ? { paymentDate: new Date(payload.paymentDate) } : {}),
         ...(payload.reference !== undefined ? { reference: payload.reference?.trim() || null } : {}),
@@ -1028,8 +1149,185 @@ export class SalesService {
     return this.toPaymentRecord(payment);
   }
 
+  async allocatePayment(
+    user: AuthenticatedUser | undefined,
+    id: string,
+    payload: AllocatePaymentDto,
+  ) {
+    const scope = await this.resolveScope(user);
+    const payment = await this.prisma.payment.findFirst({
+      where: { id, tenantId: scope.tenantId, deletedAt: null },
+      include: { allocations: true },
+    });
+    if (!payment) {
+      throw new NotFoundException("Payment not found");
+    }
+    if (
+      payment.status !== PaymentStatus.CONFIRMED &&
+      payment.status !== PaymentStatus.PARTIALLY_ALLOCATED &&
+      payment.status !== PaymentStatus.ALLOCATED
+    ) {
+      throw new BadRequestException("Seul un paiement confirmé peut être affecté à une facture.");
+    }
+
+    const invoice = await this.prisma.invoice.findFirst({
+      where: { id: payload.invoiceId, tenantId: scope.tenantId, deletedAt: null },
+    });
+    if (!invoice) {
+      throw new NotFoundException("Invoice not found");
+    }
+    if (invoice.clientId !== payment.clientId) {
+      throw new BadRequestException("Le paiement et la facture doivent appartenir au même client.");
+    }
+    if (invoice.status === InvoiceStatus.VOID || invoice.status === InvoiceStatus.CANCELLED) {
+      throw new BadRequestException("Cette facture ne peut pas recevoir de paiement.");
+    }
+
+    const requestedAmount = this.roundTnd(payload.amount);
+    const allocatedBefore = this.roundTnd(
+      payment.allocations.reduce((sum, allocation) => sum + this.decimalToNumber(allocation.amount), 0),
+    );
+    const paymentRemaining = this.roundTnd(this.decimalToNumber(payment.amount) - allocatedBefore);
+    const invoiceRemaining = this.roundTnd(this.decimalToNumber(invoice.balanceDue));
+
+    if (requestedAmount <= 0 || requestedAmount - paymentRemaining > 0.0005) {
+      throw new BadRequestException("Le montant dépasse le solde non affecté du paiement.");
+    }
+    if (requestedAmount - invoiceRemaining > 0.0005) {
+      throw new BadRequestException("Le montant dépasse le reste à payer de la facture.");
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const existingAllocation = await tx.paymentAllocation.findUnique({
+        where: {
+          paymentId_invoiceId: { paymentId: payment.id, invoiceId: invoice.id },
+        },
+      });
+      const nextAllocationAmount = this.roundTnd(
+        this.decimalToNumber(existingAllocation?.amount) + requestedAmount,
+      );
+
+      if (existingAllocation) {
+        await tx.paymentAllocation.update({
+          where: { id: existingAllocation.id },
+          data: {
+            amount: new Prisma.Decimal(nextAllocationAmount),
+            note: payload.note?.trim() || existingAllocation.note,
+            allocatedByUserId: scope.userId ?? existingAllocation.allocatedByUserId,
+          },
+        });
+      } else {
+        await tx.paymentAllocation.create({
+          data: {
+            tenantId: scope.tenantId,
+            paymentId: payment.id,
+            invoiceId: invoice.id,
+            allocatedByUserId: scope.userId ?? undefined,
+            amount: new Prisma.Decimal(requestedAmount),
+            note: payload.note?.trim() || undefined,
+          },
+        });
+      }
+
+      const nextPaid = this.roundTnd(this.decimalToNumber(invoice.paidAmount) + requestedAmount);
+      const nextBalance = this.roundTnd(Math.max(0, this.decimalToNumber(invoice.totalAmount) - nextPaid));
+      const nextInvoiceStatus = this.resolveInvoicePaymentStatus(invoice, nextPaid, nextBalance);
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          paidAmount: new Prisma.Decimal(nextPaid),
+          balanceDue: new Prisma.Decimal(nextBalance),
+          status: nextInvoiceStatus,
+          paidAt: nextBalance <= 0.0005 ? payment.paymentDate : null,
+        },
+      });
+
+      const totalAllocated = this.roundTnd(allocatedBefore + requestedAmount);
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          status:
+            this.decimalToNumber(payment.amount) - totalAllocated <= 0.0005
+              ? PaymentStatus.ALLOCATED
+              : PaymentStatus.PARTIALLY_ALLOCATED,
+        },
+      });
+    });
+
+    return this.paymentById(scope.tenantId, payment.id);
+  }
+
+  async removePaymentAllocation(
+    user: AuthenticatedUser | undefined,
+    id: string,
+    invoiceId: string,
+  ) {
+    const scope = await this.resolveScope(user);
+    const payment = await this.prisma.payment.findFirst({
+      where: { id, tenantId: scope.tenantId, deletedAt: null },
+      include: { allocations: true },
+    });
+    if (!payment) {
+      throw new NotFoundException("Payment not found");
+    }
+
+    const allocation = payment.allocations.find((item) => item.invoiceId === invoiceId);
+    if (!allocation) {
+      throw new NotFoundException("Payment allocation not found");
+    }
+    const invoice = await this.prisma.invoice.findFirst({
+      where: { id: invoiceId, tenantId: scope.tenantId, deletedAt: null },
+    });
+    if (!invoice) {
+      throw new NotFoundException("Invoice not found");
+    }
+
+    const allocationAmount = this.roundTnd(this.decimalToNumber(allocation.amount));
+    await this.prisma.$transaction(async (tx) => {
+      await tx.paymentAllocation.delete({ where: { id: allocation.id } });
+
+      const nextPaid = this.roundTnd(Math.max(0, this.decimalToNumber(invoice.paidAmount) - allocationAmount));
+      const nextBalance = this.roundTnd(Math.max(0, this.decimalToNumber(invoice.totalAmount) - nextPaid));
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          paidAmount: new Prisma.Decimal(nextPaid),
+          balanceDue: new Prisma.Decimal(nextBalance),
+          status: this.resolveInvoicePaymentStatus(invoice, nextPaid, nextBalance),
+          paidAt: nextBalance <= 0.0005 ? invoice.paidAt : null,
+        },
+      });
+
+      const allocatedAfter = this.roundTnd(
+        payment.allocations
+          .filter((item) => item.id !== allocation.id)
+          .reduce((sum, item) => sum + this.decimalToNumber(item.amount), 0),
+      );
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          status:
+            allocatedAfter <= 0.0005
+              ? PaymentStatus.CONFIRMED
+              : this.decimalToNumber(payment.amount) - allocatedAfter <= 0.0005
+                ? PaymentStatus.ALLOCATED
+                : PaymentStatus.PARTIALLY_ALLOCATED,
+        },
+      });
+    });
+
+    return this.paymentById(scope.tenantId, payment.id);
+  }
+
   async deletePayment(user: AuthenticatedUser | undefined, id: string) {
     const scope = await this.resolveScope(user);
+    const allocationCount = await this.prisma.paymentAllocation.count({
+      where: { paymentId: id, tenantId: scope.tenantId },
+    });
+    if (allocationCount > 0) {
+      throw new BadRequestException("Retirez les affectations avant de supprimer ce paiement.");
+    }
+
     const result = await this.prisma.payment.updateMany({
       where: {
         id,
@@ -1046,6 +1344,22 @@ export class SalesService {
     }
 
     return { success: true };
+  }
+
+  private async paymentById(tenantId: string, id: string) {
+    const payment = await this.prisma.payment.findFirst({
+      where: { id, tenantId, deletedAt: null },
+      include: {
+        client: true,
+        project: true,
+        allocations: {
+          include: { invoice: true },
+          orderBy: { createdAt: "desc" },
+        },
+      },
+    });
+    if (!payment) throw new NotFoundException("Payment not found");
+    return this.toPaymentRecord(payment);
   }
 
   paymentsWorkflow() {
@@ -1321,16 +1635,17 @@ export class SalesService {
       notes: quotation.internalNotes || quotation.clientNotes || "",
       lines: quotation.items.map((item) => this.toLineItem(item)),
       linkedActivity: [
-        { title: "Current status", meta: quotation.status.replaceAll("_", " ") },
-        { title: "Issued", meta: this.formatDisplayDate(quotation.issueDate) },
+        { title: "Statut", meta: quotation.status.replaceAll("_", " ") },
+        { title: "Émis le", meta: this.formatDisplayDate(quotation.issueDate) },
       ],
     };
   }
 
-  private toInvoiceRecord(invoice: InvoiceWithRelations, paymentTerms = "Bank transfer - 30 days") {
+  private toInvoiceRecord(invoice: InvoiceWithRelations, paymentTerms = "Virement bancaire - 30 jours") {
     return {
       id: invoice.id,
       number: invoice.number,
+      clientId: invoice.clientId,
       client: invoice.client.displayName,
       clientDetails: {
         contact: invoice.client.displayName,
@@ -1343,19 +1658,22 @@ export class SalesService {
       date: this.formatDisplayDate(invoice.issueDate),
       dueDate: invoice.dueDate ? this.formatDisplayDate(invoice.dueDate) : "-",
       amount: this.formatMoney(invoice.totalAmount),
+      amountValue: this.decimalToNumber(invoice.totalAmount),
       paid: this.formatMoney(invoice.paidAmount),
+      paidValue: this.decimalToNumber(invoice.paidAmount),
       remaining: this.formatMoney(invoice.balanceDue),
+      remainingValue: this.decimalToNumber(invoice.balanceDue),
       status: this.mapInvoiceStatus(invoice.status, invoice.balanceDue),
-      paymentTerms,
-      scope: invoice.customerNotes || invoice.internalNotes || "Invoice",
+      paymentTerms: invoice.paymentTerms?.trim() || paymentTerms,
+      scope: invoice.customerNotes || invoice.internalNotes || "Facture",
       linkedActivity: [
-        { title: "Invoice status", meta: invoice.status.replaceAll("_", " ") },
-        { title: "Issued", meta: this.formatDisplayDate(invoice.issueDate) },
+        { title: "Statut de la facture", meta: invoice.status.replaceAll("_", " ") },
+        { title: "Émise le", meta: this.formatDisplayDate(invoice.issueDate) },
       ],
       lines: invoice.items.map((item) => this.toLineItem(item)),
       allocations: [
-        { label: "Initial issue", value: this.formatMoney(invoice.totalAmount) },
-        { label: "Collected", value: this.formatMoney(invoice.paidAmount) },
+        { label: "Montant initial", value: this.formatMoney(invoice.totalAmount) },
+        { label: "Encaissé", value: this.formatMoney(invoice.paidAmount) },
       ],
     };
   }
@@ -1392,30 +1710,43 @@ export class SalesService {
         quantity: formatTnQuantity(this.decimalToNumber(item.quantity), item.unitLabel),
       })),
       linkedActivity: [
-        { title: "Current status", meta: note.status.replaceAll("_", " ") },
-        { title: "Scheduled", meta: this.formatDateTime(note.deliveryDate) },
-        ...(note.project ? [{ title: "Project", meta: note.project.code }] : []),
+        { title: "Statut", meta: note.status.replaceAll("_", " ") },
+        { title: "Planifié le", meta: this.formatDateTime(note.deliveryDate) },
+        ...(note.project ? [{ title: "Chantier", meta: note.project.code }] : []),
       ],
     };
   }
 
   private toPaymentRecord(payment: PaymentWithRelations) {
-    const allocationLabels = payment.allocations
-      .map((allocation) => allocation.invoice.number)
-      .filter(Boolean);
+    const allocatedAmount = this.roundTnd(
+      payment.allocations.reduce((sum, allocation) => sum + this.decimalToNumber(allocation.amount), 0),
+    );
+    const paymentAmount = this.roundTnd(this.decimalToNumber(payment.amount));
+    const unallocatedAmount = this.roundTnd(Math.max(0, paymentAmount - allocatedAmount));
+    const allocationDetails = payment.allocations.map((allocation) => ({
+      invoiceId: allocation.invoiceId,
+      invoiceNumber: allocation.invoice.number,
+      amountValue: this.decimalToNumber(allocation.amount),
+      amount: this.formatMoney(allocation.amount),
+    }));
 
     return {
       id: payment.id,
       reference: payment.number || payment.reference || payment.id,
+      clientId: payment.clientId,
       client: payment.client.displayName,
       method: payment.method.replaceAll("_", " "),
-      status: this.mapPaymentStatus(payment.status, payment.allocations.length),
+      status: this.mapPaymentStatus(payment.status, paymentAmount, allocatedAmount),
       amount: this.formatMoney(payment.amount),
-      allocations: allocationLabels.length ? allocationLabels.join(", ") : "Pending allocation",
+      amountValue: paymentAmount,
+      allocations: allocationDetails.length ? allocationDetails.map((item) => item.invoiceNumber).join(", ") : "À affecter",
+      allocationDetails,
+      unallocatedAmountValue: unallocatedAmount,
+      unallocatedAmount: this.formatMoney(unallocatedAmount),
       paidAt: payment.paymentDate.toISOString().slice(0, 10),
       note: payment.internalNotes || "",
-      project: payment.project?.name || "General",
-      sourceReference: payment.reference || "-",
+      project: payment.project?.name || "Sans chantier",
+      sourceReference: payment.reference || "—",
     };
   }
 
@@ -1436,7 +1767,7 @@ export class SalesService {
   }
 
   private formatMoney(value: Prisma.Decimal | number | string | null | undefined) {
-    return formatTnd(this.decimalToNumber(value));
+    return formatTndCompact(this.decimalToNumber(value));
   }
 
   private formatDisplayDate(value: Date) {
@@ -1476,10 +1807,21 @@ export class SalesService {
     return status;
   }
 
-  private mapPaymentStatus(status: PaymentStatus, allocationCount: number) {
-    if (status === PaymentStatus.CONFIRMED && allocationCount > 0) {
-      return "PARTIALLY_ALLOCATED";
+  private mapPaymentStatus(status: PaymentStatus, paymentAmount: number, allocatedAmount: number) {
+    if (status === PaymentStatus.CONFIRMED && allocatedAmount > 0) {
+      return paymentAmount - allocatedAmount <= 0.0005 ? PaymentStatus.ALLOCATED : PaymentStatus.PARTIALLY_ALLOCATED;
     }
     return status;
+  }
+
+  private resolveInvoicePaymentStatus(invoice: Invoice, paidAmount: number, balanceDue: number) {
+    if (balanceDue <= 0.0005) return InvoiceStatus.PAID;
+    const isOverdue = Boolean(invoice.dueDate && invoice.dueDate.getTime() < Date.now());
+    if (isOverdue) return InvoiceStatus.OVERDUE;
+    return paidAmount > 0.0005 ? InvoiceStatus.PARTIALLY_PAID : InvoiceStatus.ISSUED;
+  }
+
+  private roundTnd(value: number) {
+    return Math.round((value + Number.EPSILON) * 1000) / 1000;
   }
 }

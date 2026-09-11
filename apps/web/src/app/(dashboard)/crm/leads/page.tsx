@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Pencil, Plus, Trash2 } from "lucide-react";
+import { formatTndCompact, parseTndInput } from "@sotec/config";
 import { FilterBanner } from "../../../../components/admin/filter-banner";
 import { FormField } from "../../../../components/admin/form-field";
 import { StatusBadge } from "../../../../components/admin/status-badge";
@@ -605,14 +606,14 @@ function LeadsPageClient() {
               <Input
                 value={leadForm.prospect}
                 onChange={(event) => setLeadForm((current) => ({ ...current, prospect: event.target.value }))}
-                placeholder="Villa Chotrana"
+                placeholder="Entreprise, particulier ou projet"
               />
             </FormField>
             <FormField label={text.contactPerson}>
               <Input
                 value={leadForm.contactPerson}
                 onChange={(event) => setLeadForm((current) => ({ ...current, contactPerson: event.target.value }))}
-                placeholder="Skander Nefzi"
+                placeholder="Nom du contact"
               />
             </FormField>
             <FormField label={text.phone}>
@@ -652,7 +653,7 @@ function LeadsPageClient() {
               <Input
                 value={leadForm.budget}
                 onChange={(event) => setLeadForm((current) => ({ ...current, budget: event.target.value }))}
-                placeholder="18,000 DT"
+                placeholder="0,000 TND"
               />
             </FormField>
             <FormField label={text.nextFollowUpField}>
@@ -688,20 +689,16 @@ function LeadsPageClient() {
 }
 
 function parseLeadBudget(value: string) {
-  const normalized = value.replace(/\s*(?:DT|TND)$/i, "").replaceAll(",", "").trim();
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return parseTndInput(value);
 }
 
 function normalizeLeadBudgetInput(value: string) {
-  return value.replace(/\s*(?:DT|TND)$/i, "").replaceAll(",", "");
+  const parsed = parseTndInput(value);
+  return parsed ? String(parsed).replace(".", ",") : "";
 }
 
 function formatLeadBudget(value: number) {
-  return `${value.toLocaleString("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 3,
-  })} DT`;
+  return formatTndCompact(value);
 }
 
 function formatLeadStatus(status: LeadStatus) {
