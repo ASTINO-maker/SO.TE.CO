@@ -46,6 +46,7 @@ type AuthPayload = ApiSession & {
 
 let inMemorySession: ApiSession | null = null;
 let sessionPromise: Promise<AuthPayload> | null = null;
+let refreshPromise: Promise<AuthPayload> | null = null;
 
 function toQueryString(query?: ListQuery) {
   if (!query) {
@@ -145,6 +146,24 @@ async function refreshSession(refreshToken: string) {
   });
 }
 
+async function refreshSessionOnce(refreshToken: string) {
+  if (!refreshPromise) {
+    refreshPromise = refreshSession(refreshToken)
+      .then((payload) => {
+        storeSession({
+          accessToken: payload.accessToken,
+          refreshToken: payload.refreshToken,
+        });
+        return payload;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+
+  return refreshPromise;
+}
+
 async function ensureSession() {
   const existing = readStoredSession();
   if (existing) {
@@ -172,15 +191,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (response.status === 401) {
     try {
-      const refreshed = await refreshSession(session.refreshToken);
-      storeSession({
-        accessToken: refreshed.accessToken,
-        refreshToken: refreshed.refreshToken,
-      });
-      response = await attempt(refreshed.accessToken);
+      // Another request may already have rotated the refresh token. Reuse the
+      // newer access token first instead of refreshing again with a stale token.
+      const latestSession = readStoredSession();
+      if (latestSession && latestSession.accessToken !== session.accessToken) {
+        response = await attempt(latestSession.accessToken);
+      }
+
+      if (response.status === 401) {
+        const refreshSource = readStoredSession() ?? session;
+        const refreshed = await refreshSessionOnce(refreshSource.refreshToken);
+        response = await attempt(refreshed.accessToken);
+      }
     } catch {
       storeSession(null);
-      throw createUnauthorizedError("Your session has expired. Please sign in again.");
+      throw createUnauthorizedError("Votre session a expiré. Reconnectez-vous.");
     }
   }
 
@@ -267,5 +292,9 @@ export const apiClient = {
     storeSession(null);
   },
   resolveUrl: (path: string) => `${API_URL}${path}`,
+  getAuthorizationHeader: () => {
+    const session = readStoredSession();
+    return session ? `Bearer ${session.accessToken}` : null;
+  },
   clearSession: () => storeSession(null),
 };

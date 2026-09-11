@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Download, Printer, X } from "lucide-react";
+import { apiClient } from "../../lib/api/client";
 import { StatusBadge } from "../admin/status-badge";
 import { Button } from "../ui/button";
 import { DrawerShell } from "../ui/drawer";
@@ -84,16 +85,29 @@ async function requestPdfBlob(filename: string, markup: string) {
     return inflight;
   }
 
-  const requestPromise = fetch("/api/render-pdf", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      filename,
-      markup,
-    }),
-  })
+  const sendRequest = () => {
+    const authorization = apiClient.getAuthorizationHeader();
+    return fetch("/api/render-pdf", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(authorization ? { Authorization: authorization } : {}),
+      },
+      body: JSON.stringify({
+        filename,
+        markup,
+      }),
+    });
+  };
+
+  const requestPromise = sendRequest()
+    .then(async (response) => {
+      if (response.status === 401) {
+        await apiClient.me();
+        return sendRequest();
+      }
+      return response;
+    })
     .then(async (response) => {
       if (!response.ok) {
         const errorText = await response.text();

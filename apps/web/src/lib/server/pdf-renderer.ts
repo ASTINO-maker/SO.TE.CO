@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 
 const execFileAsync = promisify(execFile);
@@ -72,7 +72,9 @@ export async function renderPdfBuffer(filename: string, markup: string) {
 async function renderPdfBufferUncached(filename: string, markup: string) {
   const workdir = join(tmpdir(), `sotec-pdf-${randomUUID()}`);
   const htmlPath = join(workdir, "document.html");
-  const pdfPath = join(workdir, filename.toLowerCase().endsWith(".pdf") ? filename : `${filename}.pdf`);
+  const rawFilename = basename(filename || "document.pdf");
+  const safeFilename = rawFilename.toLowerCase().endsWith(".pdf") ? rawFilename : `${rawFilename}.pdf`;
+  const pdfPath = join(workdir, safeFilename);
 
   await mkdir(workdir, { recursive: true });
   await writeFile(htmlPath, markup, "utf8");
@@ -83,8 +85,7 @@ async function renderPdfBufferUncached(filename: string, markup: string) {
       "--disable-gpu",
       "--no-sandbox",
       "--disable-setuid-sandbox",
-      "--allow-file-access-from-files",
-      "--run-all-compositor-stages-before-draw",
+       "--run-all-compositor-stages-before-draw",
       `--virtual-time-budget=${Number.isFinite(PDF_VIRTUAL_TIME_BUDGET_MS) ? Math.max(150, PDF_VIRTUAL_TIME_BUDGET_MS) : 600}`,
       "--no-pdf-header-footer",
       `--print-to-pdf=${pdfPath}`,

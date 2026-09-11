@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { formatTnd } from "@sotec/config";
+import { formatTndCompact, parseTndInput } from "@sotec/config";
 import {
   ClientType,
   LeadSource,
@@ -696,12 +696,12 @@ export class CrmService {
     if (!value?.trim()) {
       return null;
     }
-    const normalized = Number.parseFloat(value.replaceAll(",", ".").replace(/[^\d.-]/g, ""));
+    const normalized = parseTndInput(value);
     return Number.isFinite(normalized) ? new Prisma.Decimal(normalized) : null;
   }
 
   private formatMoney(value: Prisma.Decimal | number | string | null | undefined) {
-    return formatTnd(this.decimalToNumber(value));
+    return formatTndCompact(this.decimalToNumber(value));
   }
 
   private buildAddress(addressLine1?: string | null, city?: string | null) {

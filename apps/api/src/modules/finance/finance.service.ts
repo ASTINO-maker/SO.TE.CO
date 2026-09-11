@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { formatTnd } from "@sotec/config";
+import { formatTndCompact } from "@sotec/config";
 import { ExpenseStatus, Prisma } from "@sotec/database";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { WorkspaceService } from "../../common/workspace/workspace.service";
@@ -187,7 +187,7 @@ export class FinanceService {
       category: expense.category.name,
       description: expense.title,
       project: expense.project?.name || "General",
-      amount: formatTnd(Number(expense.amount)),
+      amount: formatTndCompact(Number(expense.amount)),
       status: expense.status,
       date: expense.expenseDate.toISOString().slice(0, 10),
       note: expense.description || "-",

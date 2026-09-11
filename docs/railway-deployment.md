@@ -49,7 +49,6 @@ DEFAULT_TENANT_SLUG=sotec
 DEFAULT_OWNER_EMAIL=admin@sotec.local
 DEFAULT_OWNER_PASSWORD=replace-before-first-login
 JWT_ACCESS_SECRET=replace-with-openssl-rand-hex-32
-JWT_REFRESH_SECRET=replace-with-another-openssl-rand-hex-32
 JWT_ACCESS_TTL=15m
 JWT_REFRESH_TTL_DAYS=30
 STORAGE_DRIVER=local

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { formatTnd as formatTndShared } from "@sotec/config";
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { formatTndCompact } from "@sotec/config";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { WorkspaceService } from "../../common/workspace/workspace.service";
@@ -55,6 +55,17 @@ export class SettingsService {
   ) {}
 
   async getDocumentSettings(user: AuthenticatedUser) {
+    const canReadBusinessDocuments = [
+      "settings.read",
+      "quotations.read",
+      "invoices.read",
+      "delivery_notes.read",
+    ].some((permission) => user.permissions.includes(permission));
+
+    if (!canReadBusinessDocuments) {
+      throw new ForbiddenException("Missing permission to read document settings");
+    }
+
     return this.workspaceService.getDocumentSettings(user.tenantId);
   }
 
@@ -210,9 +221,8 @@ export class SettingsService {
     return this.workspaceService.updateDocumentSettings(user.tenantId, payload);
   }
 
-  async getWorkerPayments() {
-    const workspace = await this.workspaceService.ensureWorkspace();
-    const items = await this.readWorkerPaymentBatches(workspace.tenantId);
+  async getWorkerPayments(tenantId: string) {
+    const items = await this.readWorkerPaymentBatches(tenantId);
     return {
       data: items,
       meta: {
@@ -224,9 +234,8 @@ export class SettingsService {
     };
   }
 
-  async createWorkerPayment(payload: CreateWorkerPaymentDto) {
-    const workspace = await this.workspaceService.ensureWorkspace();
-    const current = await this.readWorkerPaymentBatches(workspace.tenantId);
+  async createWorkerPayment(tenantId: string, payload: CreateWorkerPaymentDto) {
+    const current = await this.readWorkerPaymentBatches(tenantId);
     const workers = payload.workers
       .map((worker) => ({
         id: randomUUID(),
@@ -260,7 +269,7 @@ export class SettingsService {
     await this.prisma.setting.upsert({
       where: {
         tenantId_scopeKey_key: {
-          tenantId: workspace.tenantId,
+          tenantId,
           scopeKey: GLOBAL_SCOPE,
           key: WORKER_PAYMENTS_KEY,
         },
@@ -269,7 +278,7 @@ export class SettingsService {
         value: next as unknown as Prisma.InputJsonValue,
       },
       create: {
-        tenantId: workspace.tenantId,
+        tenantId,
         scopeKey: GLOBAL_SCOPE,
         key: WORKER_PAYMENTS_KEY,
         value: next as unknown as Prisma.InputJsonValue,
@@ -279,9 +288,8 @@ export class SettingsService {
     return batch;
   }
 
-  async deleteWorkerPayment(id: string) {
-    const workspace = await this.workspaceService.ensureWorkspace();
-    const current = await this.readWorkerPaymentBatches(workspace.tenantId);
+  async deleteWorkerPayment(tenantId: string, id: string) {
+    const current = await this.readWorkerPaymentBatches(tenantId);
     const next = current.filter((item) => item.id !== id);
 
     if (next.length === current.length) {
@@ -291,7 +299,7 @@ export class SettingsService {
     await this.prisma.setting.upsert({
       where: {
         tenantId_scopeKey_key: {
-          tenantId: workspace.tenantId,
+          tenantId,
           scopeKey: GLOBAL_SCOPE,
           key: WORKER_PAYMENTS_KEY,
         },
@@ -300,7 +308,7 @@ export class SettingsService {
         value: next as unknown as Prisma.InputJsonValue,
       },
       create: {
-        tenantId: workspace.tenantId,
+        tenantId,
         scopeKey: GLOBAL_SCOPE,
         key: WORKER_PAYMENTS_KEY,
         value: next as unknown as Prisma.InputJsonValue,
@@ -311,11 +319,11 @@ export class SettingsService {
   }
 
   async updateWorkerPayment(
+    tenantId: string,
     id: string,
     payload: CreateWorkerPaymentDto,
   ): Promise<StoredWorkerPaymentBatch> {
-    const workspace = await this.workspaceService.ensureWorkspace();
-    const current = await this.readWorkerPaymentBatches(workspace.tenantId);
+    const current = await this.readWorkerPaymentBatches(tenantId);
     const index = current.findIndex((item) => item.id === id);
 
     if (index === -1) {
@@ -357,7 +365,7 @@ export class SettingsService {
     await this.prisma.setting.upsert({
       where: {
         tenantId_scopeKey_key: {
-          tenantId: workspace.tenantId,
+          tenantId,
           scopeKey: GLOBAL_SCOPE,
           key: WORKER_PAYMENTS_KEY,
         },
@@ -366,7 +374,7 @@ export class SettingsService {
         value: next as unknown as Prisma.InputJsonValue,
       },
       create: {
-        tenantId: workspace.tenantId,
+        tenantId,
         scopeKey: GLOBAL_SCOPE,
         key: WORKER_PAYMENTS_KEY,
         value: next as unknown as Prisma.InputJsonValue,
@@ -401,7 +409,7 @@ export class SettingsService {
   }
 
   private formatTnd(value: number) {
-    return formatTndShared(value);
+    return formatTndCompact(value);
   }
 
   private assertUniqueWorkerNames(workers: Array<{ name: string }>) {

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { parseTndInput } from "@sotec/config";
 import { FormField } from "../../../../components/admin/form-field";
 import { ClientsWorkspace, type ClientRecord } from "../../../../components/crm/clients-workspace";
 import { Button } from "../../../../components/ui/button";
@@ -605,7 +606,7 @@ export default function ClientsPage() {
               <Input
                 value={clientForm.openingBalance}
                 onChange={(event) => updateForm("openingBalance", event.target.value)}
-                placeholder="0"
+                placeholder="0,000 TND"
               />
             </FormField>
 
@@ -651,7 +652,8 @@ function getApiErrorMessage(error: unknown, fallback: string) {
 }
 
 function normalizeMoneyInput(value: string) {
-  return value.replace(/\s*(?:TND|DT)$/i, "").trim();
+  const parsed = parseTndInput(value);
+  return parsed ? String(parsed).replace(".", ",") : "";
 }
 
 async function parseClientsExcel(file: File): Promise<ClientImportParseResult> {

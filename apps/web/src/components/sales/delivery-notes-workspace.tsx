@@ -1033,7 +1033,7 @@ export function DeliveryNotesWorkspace() {
                   className="h-11 rounded-xl"
                   value={deliveryForm.responsible}
                   onChange={(event) => setDeliveryForm((current) => ({ ...current, responsible: event.target.value }))}
-                  placeholder="Karim H."
+                  placeholder="Nom du livreur"
                 />
               </FormField>
               <FormField label="Véhicule / transport">
@@ -1041,7 +1041,7 @@ export function DeliveryNotesWorkspace() {
                   className="h-11 rounded-xl"
                   value={deliveryForm.vehicle}
                   onChange={(event) => setDeliveryForm((current) => ({ ...current, vehicle: event.target.value }))}
-                  placeholder="Iveco Daily - 198 TN 445"
+                  placeholder="Véhicule / immatriculation"
                 />
               </FormField>
             </div>

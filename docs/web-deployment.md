@@ -47,7 +47,7 @@ Edit `.env.web`:
 - set `APP_DOMAIN` to the real domain, for example `erp.sotec.tn`
 - set `APP_URL` and `CORS_ORIGIN` to `https://<same-domain>`
 - replace `POSTGRES_PASSWORD`
-- replace `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET`
+- replace `JWT_ACCESS_SECRET`
 - replace `DEFAULT_OWNER_PASSWORD` before the first login
 
 Generate secrets with:

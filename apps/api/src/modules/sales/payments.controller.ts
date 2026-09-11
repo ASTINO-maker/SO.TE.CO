@@ -7,6 +7,7 @@ import type { AuthenticatedUser } from "../auth/interfaces/authenticated-user.in
 import { SalesService } from "./sales.service";
 import { CreatePaymentDto } from "./dto/create-payment.dto";
 import { UpdatePaymentDto } from "./dto/update-payment.dto";
+import { AllocatePaymentDto } from "./dto/allocate-payment.dto";
 
 @ApiTags("Sales")
 @ApiBearerAuth()
@@ -37,6 +38,28 @@ export class PaymentsController {
     @Body() payload: UpdatePaymentDto,
   ) {
     return this.salesService.updatePayment(user, id, payload);
+  }
+
+  @ApiOperation({ summary: "Allocate a payment to an invoice" })
+  @RequirePermissions("payments.allocate")
+  @Post(":id/allocations")
+  allocate(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id") id: string,
+    @Body() payload: AllocatePaymentDto,
+  ) {
+    return this.salesService.allocatePayment(user, id, payload);
+  }
+
+  @ApiOperation({ summary: "Remove a payment allocation from an invoice" })
+  @RequirePermissions("payments.allocate")
+  @Delete(":id/allocations/:invoiceId")
+  removeAllocation(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id") id: string,
+    @Param("invoiceId") invoiceId: string,
+  ) {
+    return this.salesService.removePaymentAllocation(user, id, invoiceId);
   }
 
   @ApiOperation({ summary: "Delete a payment" })

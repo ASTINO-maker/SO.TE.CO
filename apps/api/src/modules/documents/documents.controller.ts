@@ -57,7 +57,12 @@ export class DocumentsController {
   @ApiConsumes("multipart/form-data")
   @RequirePermissions("files.upload")
   @UseInterceptors(
-    FileInterceptor("file"),
+    FileInterceptor("file", {
+      limits: {
+        files: 1,
+        fileSize: 20 * 1024 * 1024,
+      },
+    }),
   )
   @Post("upload")
   upload(

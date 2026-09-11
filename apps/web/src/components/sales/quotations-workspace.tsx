@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CheckCheck, Copy, Download, Eye, Pencil, Plus, Search, Send, Trash2 } from "lucide-react";
-import { formatTnd, formatTnQuantity } from "@sotec/config";
+import { formatTndCompact, formatTnQuantity, parseTndInput } from "@sotec/config";
 import { apiClient } from "../../lib/api/client";
 import type { ApiError, PaginatedResponse } from "../../lib/api/types";
 import { renderQuotationMarkupFromRecord } from "../../lib/server/document-templates";
@@ -116,10 +116,11 @@ interface DraftQuotationPreview {
 }
 
 function createDefaultNewQuotationForm(client = ""): NewQuotationFormState {
+  const issueDate = currentDateInputValue();
   return {
     client,
-    issueDate: "",
-    validUntil: "",
+    issueDate,
+    validUntil: addDaysToDateInput(issueDate, 30),
     chantier: "",
     scope: "",
     amount: "",
@@ -130,8 +131,7 @@ function createDefaultNewQuotationForm(client = ""): NewQuotationFormState {
 
 function createDefaultDraftLines() {
   return [
-    { id: "quotation-line-1", description: "Portee principale", quantity: "1", unit: "u", unitPrice: "6400" },
-    { id: "quotation-line-2", description: "Fabrication et installation", quantity: "1", unit: "u", unitPrice: "2200" },
+    { id: "quotation-line-1", description: "", quantity: "1", unit: "u", unitPrice: "" },
   ];
 }
 
@@ -298,7 +298,7 @@ export function QuotationsWorkspace() {
       .filter((line) => line.description);
 
     return {
-      number: "DEVIS N° Q-2026-DRAFT",
+      number: "DEVIS · BROUILLON",
       status: "DRAFT",
       issueDate: newQuotationForm.issueDate ? formatFormalQuotationDate(newQuotationForm.issueDate) : "À définir",
       validUntil: newQuotationForm.validUntil ? formatFormalQuotationDate(newQuotationForm.validUntil) : "À définir",
@@ -307,7 +307,7 @@ export function QuotationsWorkspace() {
       chantier: newQuotationForm.chantier.trim() || "Chantier à définir",
       scope: newQuotationForm.scope.trim() || "Portée commerciale à définir",
       note: newQuotationForm.note.trim(),
-      total: formatQuotationTnd(draftTotal),
+      total: validLines.length ? formatQuotationTnd(draftTotal) : "—",
       lines: validLines.length
         ? validLines.map((line) => ({
             label: line.description,
@@ -316,7 +316,7 @@ export function QuotationsWorkspace() {
             unitPrice: formatQuotationTnd(line.unitPriceValue),
             total: formatQuotationTnd(line.quantityValue * line.unitPriceValue),
           }))
-        : [{ label: "Aucune ligne ajoutée", quantity: "-", unit: "", unitPrice: "-", total: formatQuotationTnd(0) }],
+        : [{ label: "Aucune ligne ajoutée", quantity: "—", unit: "", unitPrice: "—", total: "—" }],
     };
   }, [clients, draftLines, draftTotal, newQuotationForm]);
 
@@ -389,8 +389,8 @@ export function QuotationsWorkspace() {
   function openEditQuotationDialog(quotation: QuotationRecord) {
     const nextForm = {
       client: quotation.client,
-      issueDate: toDateInputValue(quotation.date, "2026-04-01"),
-      validUntil: toDateInputValue(quotation.validUntil, "2026-05-01"),
+      issueDate: toDateInputValue(quotation.date, ""),
+      validUntil: toDateInputValue(quotation.validUntil, ""),
       chantier: quotation.chantier,
       scope: quotation.scope,
       amount: String(parseQuotationNumber(quotation.amount)),
@@ -1252,7 +1252,7 @@ export function QuotationsWorkspace() {
                             aria-invalid={Boolean(lineErrors[line.id]?.unitPrice)}
                             value={line.unitPrice}
                             onChange={(event) => updateDraftLine(line.id, "unitPrice", event.target.value)}
-                            placeholder="0"
+                            placeholder="0,000"
                           />
                           {lineErrors[line.id]?.unitPrice ? (
                             <p className="text-xs font-medium text-rose-600">{lineErrors[line.id]?.unitPrice}</p>
@@ -1414,32 +1414,11 @@ function getApiErrorMessage(error: unknown, fallback: string) {
 }
 
 function parseQuotationNumber(value: string) {
-  const sanitized = value.replace(/[^\d,.-]/g, "").trim();
-  if (!sanitized) {
-    return 0;
-  }
-
-  const hasComma = sanitized.includes(",");
-  const hasDot = sanitized.includes(".");
-  let normalized = sanitized;
-
-  if (hasComma && hasDot) {
-    normalized =
-      sanitized.lastIndexOf(",") > sanitized.lastIndexOf(".")
-        ? sanitized.replace(/\./g, "").replace(",", ".")
-        : sanitized.replace(/,/g, "");
-  } else if (hasComma) {
-    normalized = /^-?\d{1,3}(,\d{3})+$/.test(sanitized)
-      ? sanitized.replace(/,/g, "")
-      : sanitized.replace(",", ".");
-  }
-
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return parseTndInput(value);
 }
 
 function formatQuotationTnd(value: number) {
-  return formatTnd(value);
+  return formatTndCompact(value);
 }
 
 function extractUnitFromQuantityLabel(quantityLabel: string | undefined): string {
@@ -1450,7 +1429,7 @@ function extractUnitFromQuantityLabel(quantityLabel: string | undefined): string
 
 function formatQuotationDate(value: string) {
   if (!value) {
-    return "1 avr. 2026";
+    return "—";
   }
 
   const date = value.includes("-") ? new Date(`${value}T00:00:00`) : new Date(value);
@@ -1467,7 +1446,7 @@ function formatQuotationDate(value: string) {
 
 function formatFormalQuotationDate(value: string) {
   if (!value) {
-    return "01/04/2026";
+    return "—";
   }
 
   const nativeDate = value.includes("-") ? new Date(`${value}T00:00:00`) : new Date(value);
@@ -1498,6 +1477,25 @@ function toDateInputValue(value: string, fallback: string) {
   return `${year}-${month}-${day}`;
 }
 
+function currentDateInputValue() {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addDaysToDateInput(value: string, days: number) {
+  if (!value) return "";
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setDate(date.getDate() + days);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function formatQuotationStatusLabel(status: string) {
   const labels: Record<string, string> = {
     DRAFT: "Brouillon",
@@ -1517,84 +1515,23 @@ function buildQuotationClientDetails(
 ): QuotationClientDetails {
   if (clientRecord) {
     return {
-      contact: clientRecord.contactName || clientRecord.name,
-      phone: clientRecord.phone || "-",
-      email: clientRecord.email || "-",
-      address: clientRecord.address || "-",
-      city: clientRecord.city || "-",
-      clientCode: clientRecord.code || "CLI-NEW",
+      contact: clientRecord.contactName || clientRecord.name || "—",
+      phone: clientRecord.phone || "—",
+      email: clientRecord.email || "—",
+      address: clientRecord.address || "—",
+      city: clientRecord.city || "—",
+      clientCode: clientRecord.code || "—",
     };
   }
 
-  const knownClients: Record<string, QuotationClientDetails> = {
-    "SARL Construction Moderne": {
-      contact: "Sami Ben Amor",
-      phone: "+216 22 410 840",
-      email: "contact@construction-moderne.tn",
-      address: "42 Avenue des Champs, 75008 Paris",
-      city: "Paris",
-      clientCode: "CLI-0012",
-    },
-    "M. Laurent Dubois": {
-      contact: "Laurent Dubois",
-      phone: "+216 55 341 901",
-      email: "laurent.dubois@email.fr",
-      address: "15 Rue de la République, 69002 Lyon",
-      city: "Lyon",
-      clientCode: "CLI-0048",
-    },
-    "Villa Prestige SARL": {
-      contact: "Rania Mhiri",
-      phone: "+216 28 119 442",
-      email: "info@villa-prestige.fr",
-      address: "88 Boulevard Longchamp, 13001 Marseille",
-      city: "Marseille",
-      clientCode: "CLI-0061",
-    },
-    "M. Pierre Bernard": {
-      contact: "Pierre Bernard",
-      phone: "+216 23 988 120",
-      email: "p.bernard@email.fr",
-      address: "67 Rue du Commerce, 59000 Lille",
-      city: "Lille",
-      clientCode: "CLI-0069",
-    },
-    "Atlas Promotion": {
-      contact: "Nour El Heni",
-      phone: "+216 71 220 403",
-      email: "nour@atlas-promotion.tn",
-      address: "15 Rue du Lac, Les Berges du Lac",
-      city: "Tunis",
-      clientCode: "CLI-0048",
-    },
-    "Villa Les Pins": {
-      contact: "Meriem Trabelsi",
-      phone: "+216 26 108 940",
-      email: "meriem.trabelsi@email.tn",
-      address: "7 Rue des Pins, La Marsa",
-      city: "La Marsa",
-      clientCode: "CLI-0061",
-    },
-    "SARL TechnoStruct": {
-      contact: "Hichem Gharsalli",
-      phone: "+216 55 300 611",
-      email: "contact@technostruct.tn",
-      address: "Zone industrielle Nord, Tunis",
-      city: "Tunis",
-      clientCode: "CLI-0074",
-    },
+  return {
+    contact: clientName || "—",
+    phone: "—",
+    email: "—",
+    address: "—",
+    city: "—",
+    clientCode: "—",
   };
-
-  return (
-    knownClients[clientName] ?? {
-      contact: clientName,
-      phone: "+216 00 000 000",
-      email: "client@sotec.tn",
-      address: "Tunisia",
-      city: "Tunis",
-      clientCode: "CLI-NEW",
-    }
-  );
 }
 
 function buildQuotationLines(scope: string, itemCount: number, totalAmount: number) {

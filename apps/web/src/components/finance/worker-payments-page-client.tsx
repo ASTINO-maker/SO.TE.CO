@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { formatTndCompact, parseTndInput } from "@sotec/config";
 import { apiClient } from "../../lib/api/client";
 import type { ApiError, PaginatedResponse } from "../../lib/api/types";
 import { PageHeader } from "../admin/page-header";
@@ -244,7 +245,7 @@ export function WorkerPaymentsPageClient() {
         .map((worker) => ({
           name: worker.name.trim(),
           role: worker.role.trim() || undefined,
-          amount: Number(worker.amount),
+          amount: parseTndInput(worker.amount),
         }))
         .filter((worker) => worker.name && worker.amount > 0),
     };
@@ -551,7 +552,7 @@ export function WorkerPaymentsPageClient() {
                 <p className="text-sm text-muted-foreground">{text.batchTotal}</p>
                 <p className="text-2xl font-semibold">
                   {formatTnd(
-                    workerForm.workers.reduce((sum, worker) => sum + (Number(worker.amount) || 0), 0),
+                    workerForm.workers.reduce((sum, worker) => sum + parseTndInput(worker.amount), 0),
                   )}
                 </p>
               </div>
@@ -575,10 +576,7 @@ export function WorkerPaymentsPageClient() {
 }
 
 function formatTnd(value: number) {
-  return `${value.toLocaleString("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 3,
-  })} DT`;
+  return formatTndCompact(value);
 }
 
 function getApiErrorMessage(error: unknown, fallback: string) {

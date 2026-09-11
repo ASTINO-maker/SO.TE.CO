@@ -1,4 +1,4 @@
-import { formatTnd as formatTndShared } from "@sotec/config";
+import { formatTnd as formatTndShared, parseTndInput } from "@sotec/config";
 
 function escapeHtml(value: string) {
   return value
@@ -35,32 +35,7 @@ function formatInvoiceTnd(value: number | string, options: { decimals?: number }
 }
 
 function toNumericValue(value: number | string) {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
-  }
-
-  const sanitized = String(value).replace(/[^\d,.-]/g, "").trim();
-  if (!sanitized) {
-    return 0;
-  }
-
-  const hasComma = sanitized.includes(",");
-  const hasDot = sanitized.includes(".");
-  let normalized = sanitized;
-
-  if (hasComma && hasDot) {
-    normalized =
-      sanitized.lastIndexOf(",") > sanitized.lastIndexOf(".")
-        ? sanitized.replace(/\./g, "").replace(",", ".")
-        : sanitized.replace(/,/g, "");
-  } else if (hasComma) {
-    normalized = /^-?\d{1,3}(,\d{3})+$/.test(sanitized)
-      ? sanitized.replace(/,/g, "")
-      : sanitized.replace(",", ".");
-  }
-
-  const numeric = Number.parseFloat(normalized);
-  return Number.isFinite(numeric) ? numeric : 0;
+  return parseTndInput(value);
 }
 
 function round3(value: number) {

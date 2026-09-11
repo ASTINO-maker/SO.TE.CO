@@ -970,6 +970,7 @@ model Invoice {
   totalAmount          Decimal             @default(0) @db.Decimal(14, 3)
   paidAmount           Decimal             @default(0) @db.Decimal(14, 3)
   balanceDue           Decimal             @default(0) @db.Decimal(14, 3)
+  paymentTerms         String?
   internalNotes        String?
   customerNotes        String?
   tenant               Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)

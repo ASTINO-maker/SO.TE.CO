@@ -14,8 +14,8 @@ export function LoginPageClient({ nextHref }: { nextHref: string }) {
   const [checking, setChecking] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [email, setEmail] = useState("admin@sotec.local");
-  const [password, setPassword] = useState("ChangeMe123!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
   const safeNextHref = useMemo(() => {
     if (!nextHref || !nextHref.startsWith("/")) {
@@ -36,9 +36,9 @@ export function LoginPageClient({ nextHref }: { nextHref: string }) {
     signIn: "Connexion",
     welcome: "Bon retour",
     loginDescription: "Utilisez le compte propriétaire pour accéder à l'espace opérationnel.",
-    localAccount: "Compte propriétaire local",
+    localAccount: "Connexion sécurisée",
     accountHelp:
-      "Après la première connexion réussie, l'application redirige vers la configuration de l'espace et impose un changement de mot de passe.",
+      "Utilisez les identifiants configurés pour votre espace SO.TE.CO. Aucun mot de passe par défaut n'est affiché dans l'application.",
     email: "E-mail",
     password: "Mot de passe",
     submit: "Se connecter",
@@ -158,17 +158,9 @@ export function LoginPageClient({ nextHref }: { nextHref: string }) {
               <p className="text-sm leading-6 text-slate-500">{text.loginDescription}</p>
             </div>
 
-            <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              <p className="font-medium">{text.localAccount}</p>
-              <p className="mt-1">
-                {text.email}: <span className="font-semibold">admin@sotec.local</span>
-              </p>
-              <p>
-                {text.password}: <span className="font-semibold">ChangeMe123!</span>
-              </p>
-              <p className="mt-2 text-amber-800">
-                {text.accountHelp}
-              </p>
+            <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              <p className="font-medium text-slate-900">{text.localAccount}</p>
+              <p className="mt-1 leading-6">{text.accountHelp}</p>
             </div>
 
             <form className="grid gap-5" onSubmit={handleSubmit}>

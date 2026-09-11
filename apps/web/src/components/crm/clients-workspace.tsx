@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { parseTndInput } from "@sotec/config";
 import {
   Building2,
   ChevronRight,
@@ -1062,9 +1063,7 @@ function formatClientType(type: ClientRecord["type"]) {
 }
 
 function parseTndAmount(value: string) {
-  const normalized = value.replace(/\s+(?:TND|DT)$/i, "").replaceAll(",", "").trim();
-  const amount = Number.parseFloat(normalized);
-  return Number.isFinite(amount) ? amount : 0;
+  return parseTndInput(value);
 }
 
 function createClientInvoiceMarkup(client: ClientRecord, invoice: ClientRecord["invoices"][number]) {

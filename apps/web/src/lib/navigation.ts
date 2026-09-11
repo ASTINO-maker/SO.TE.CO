@@ -4,6 +4,7 @@ export interface NavigationItem {
   description: string;
   icon: IconKey;
   badge?: string;
+  requiredPermission: string;
 }
 
 export interface NavigationSection {
@@ -28,8 +29,8 @@ export type IconKey =
   | "key-round"
   | "settings";
 
-export function getNavigationSections(_locale: Locale): NavigationSection[] {
-  return [
+export function getNavigationSections(_locale: Locale, permissions?: readonly string[]): NavigationSection[] {
+  const sections: NavigationSection[] = [
     {
       title: "Pilotage",
       items: [
@@ -38,6 +39,7 @@ export function getNavigationSections(_locale: Locale): NavigationSection[] {
           href: "/dashboard",
           description: "Vue globale sur le chiffre, les urgences, les devis, les factures et les chantiers en cours.",
           icon: "home",
+          requiredPermission: "dashboard.read",
         },
       ],
     },
@@ -49,12 +51,14 @@ export function getNavigationSections(_locale: Locale): NavigationSection[] {
           href: "/crm/clients",
           description: "Fiches clients, contacts, historique, documents et encours de règlement.",
           icon: "users",
+          requiredPermission: "clients.read",
         },
         {
           title: "Prospects",
           href: "/crm/leads",
           description: "Prospection, rappels, qualification commerciale et conversion en client.",
           icon: "user-plus",
+          requiredPermission: "leads.read",
         },
       ],
     },
@@ -66,18 +70,21 @@ export function getNavigationSections(_locale: Locale): NavigationSection[] {
           href: "/sales/quotations",
           description: "Préparation des offres, validation commerciale, PDF et conversion en facture.",
           icon: "file-text",
+          requiredPermission: "quotations.read",
         },
         {
           title: "Factures",
           href: "/sales/invoices",
           description: "Émission, échéances, suivi des paiements, relances et génération des bons associés.",
           icon: "receipt",
+          requiredPermission: "invoices.read",
         },
         {
           title: "Bons de livraison",
           href: "/sales/delivery-notes",
           description: "Documents de sortie, transport, preuve de livraison et suivi terrain.",
           icon: "truck",
+          requiredPermission: "delivery_notes.read",
         },
       ],
     },
@@ -89,30 +96,35 @@ export function getNavigationSections(_locale: Locale): NavigationSection[] {
           href: "/operations/projects",
           description: "Suivi chantier, planning, étapes, mesures, pièces jointes et avancement.",
           icon: "hammer",
+          requiredPermission: "projects.read",
         },
         {
           title: "Paiements",
           href: "/finance/payments",
           description: "Encaissements clients, affectation aux factures et références de règlement.",
           icon: "wallet",
+          requiredPermission: "payments.read",
         },
         {
           title: "Paiements ouvriers",
           href: "/finance/worker-payments",
           description: "Avances, fins de mois et historique des paiements d'équipe et sous-main.",
           icon: "coins",
+          requiredPermission: "payments.read",
         },
         {
           title: "Dépenses",
           href: "/finance/expenses",
           description: "Coûts chantier, charges générales, validation et lecture de rentabilité.",
           icon: "coins",
+          requiredPermission: "expenses.read",
         },
         {
           title: "Documents",
           href: "/documents",
           description: "Bibliothèque documentaire centralisée pour clients, projets, devis et factures.",
           icon: "folder",
+          requiredPermission: "files.read",
         },
       ],
     },
@@ -124,21 +136,24 @@ export function getNavigationSections(_locale: Locale): NavigationSection[] {
           href: "/settings",
           description: "Société, compte admin, coordonnées bancaires, modèles documentaires et sécurité.",
           icon: "settings",
+          requiredPermission: "settings.read",
         },
       ],
     },
   ];
+
+  if (!permissions) return sections;
+  const allowed = new Set(permissions);
+  return sections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => allowed.has(item.requiredPermission)),
+    }))
+    .filter((section) => section.items.length > 0);
 }
 
 export const navigationSections = getNavigationSections("fr");
 export const navigation = navigationSections.flatMap((section) => section.items);
-
-export const dashboardStats = [
-  { label: "Valeur du pipeline", value: "84 500,000 TND", trend: "+12% vs mois précédent" },
-  { label: "Devis approuvés", value: "14", trend: "5 en attente de lancement chantier" },
-  { label: "Chantiers actifs", value: "9", trend: "3 prêts pour installation" },
-  { label: "Créances ouvertes", value: "21 300,000 TND", trend: "4 factures en retard" },
-] as const;
 
 export const workflowSteps = [
   "Qualification du prospect",
