@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { formatTndCompact, parseTndInput } from "@sotec/config";
 import {
   ClientType,
@@ -230,49 +230,74 @@ export class CrmService {
 
   async createClient(user: AuthenticatedUser | undefined, payload: CreateClientDto) {
     const scope = await this.resolveScope(user);
-    const code = payload.code?.trim() || (await this.nextClientCode(scope.tenantId));
+    const requestedCode = payload.code?.trim();
+    const maxAttempts = requestedCode ? 1 : 5;
+    let lastUniqueError: unknown;
 
-    const client = await this.prisma.client.create({
-      data: {
-        tenantId: scope.tenantId,
-        branchId: scope.branchId ?? undefined,
-        code,
-        type: payload.type === "Company" ? ClientType.COMPANY : ClientType.INDIVIDUAL,
-        displayName: payload.name.trim(),
-        legalName: payload.name.trim(),
-        taxId: payload.taxIdentifier?.trim() || undefined,
-        email: payload.email?.trim() || undefined,
-        phone: payload.phone.trim(),
-        city: payload.city.trim(),
-        addressLine1: payload.address.trim(),
-        creditLimit: this.toDecimalOrNull(payload.openingBalance),
-        isActive: true,
-        contacts: {
-          create: {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const code = requestedCode || (await this.nextClientCode(scope.tenantId));
+
+      try {
+        const client = await this.prisma.client.create({
+          data: {
             tenantId: scope.tenantId,
-            firstName: this.firstNameFromFullName(payload.contactName),
-            lastName: this.lastNameFromFullName(payload.contactName),
+            branchId: scope.branchId ?? undefined,
+            code,
+            type: payload.type === "Company" ? ClientType.COMPANY : ClientType.INDIVIDUAL,
+            displayName: payload.name.trim(),
+            legalName: payload.name.trim(),
+            taxId: payload.taxIdentifier?.trim() || undefined,
             email: payload.email?.trim() || undefined,
             phone: payload.phone.trim(),
-            isPrimary: true,
-          },
-        },
-        notes: payload.notes?.trim()
-          ? {
+            city: payload.city.trim(),
+            addressLine1: payload.address.trim(),
+            creditLimit: this.toDecimalOrNull(payload.openingBalance),
+            isActive: true,
+            contacts: {
               create: {
                 tenantId: scope.tenantId,
-                userId: scope.userId ?? undefined,
-                body: payload.notes.trim(),
+                firstName: this.firstNameFromFullName(payload.contactName),
+                lastName: this.lastNameFromFullName(payload.contactName),
+                email: payload.email?.trim() || undefined,
+                phone: payload.phone.trim(),
+                isPrimary: true,
               },
-            }
-          : undefined,
-      },
-      select: {
-        id: true,
-      },
-    });
+            },
+            notes: payload.notes?.trim()
+              ? {
+                  create: {
+                    tenantId: scope.tenantId,
+                    userId: scope.userId ?? undefined,
+                    body: payload.notes.trim(),
+                  },
+                }
+              : undefined,
+          },
+          select: {
+            id: true,
+          },
+        });
 
-    return this.getClient(user, client.id);
+        return this.getClient(user, client.id);
+      } catch (error) {
+        if (!this.isUniqueConstraintError(error)) {
+          throw error;
+        }
+
+        if (requestedCode) {
+          throw new ConflictException(`Le code client "${requestedCode}" existe deja.`);
+        }
+
+        lastUniqueError = error;
+        await new Promise((resolve) => setTimeout(resolve, 10 + Math.floor(Math.random() * 30)));
+      }
+    }
+
+    throw new ConflictException(
+      lastUniqueError
+        ? "Impossible de generer un code client unique. Veuillez reessayer."
+        : "Impossible de creer le client.",
+    );
   }
 
   async updateClient(
@@ -303,59 +328,66 @@ export class CrmService {
 
     const primaryContact = existing.contacts[0];
 
-    await this.prisma.client.update({
-      where: {
-        id: existing.id,
-      },
-      data: {
-        code: payload.code?.trim() || existing.code,
-        type:
-          payload.type !== undefined
-            ? payload.type === "Company"
-              ? ClientType.COMPANY
-              : ClientType.INDIVIDUAL
-            : existing.type,
-        displayName: payload.name?.trim() || existing.displayName,
-        legalName: payload.name?.trim() || existing.legalName,
-        taxId: payload.taxIdentifier?.trim() || existing.taxId,
-        email:
-          payload.email !== undefined ? payload.email.trim() || null : existing.email,
-        phone: payload.phone?.trim() || existing.phone,
-        city: payload.city?.trim() || existing.city,
-        addressLine1: payload.address?.trim() || existing.addressLine1,
-        creditLimit:
-          payload.openingBalance !== undefined
-            ? this.toDecimalOrNull(payload.openingBalance)
-            : existing.creditLimit,
-        contacts: {
-          update:
-            primaryContact && payload.contactName
-              ? {
-                  where: { id: primaryContact.id },
-                  data: {
+    try {
+      await this.prisma.client.update({
+        where: {
+          id: existing.id,
+        },
+        data: {
+          code: payload.code?.trim() || existing.code,
+          type:
+            payload.type !== undefined
+              ? payload.type === "Company"
+                ? ClientType.COMPANY
+                : ClientType.INDIVIDUAL
+              : existing.type,
+          displayName: payload.name?.trim() || existing.displayName,
+          legalName: payload.name?.trim() || existing.legalName,
+          taxId: payload.taxIdentifier?.trim() || existing.taxId,
+          email:
+            payload.email !== undefined ? payload.email.trim() || null : existing.email,
+          phone: payload.phone?.trim() || existing.phone,
+          city: payload.city?.trim() || existing.city,
+          addressLine1: payload.address?.trim() || existing.addressLine1,
+          creditLimit:
+            payload.openingBalance !== undefined
+              ? this.toDecimalOrNull(payload.openingBalance)
+              : existing.creditLimit,
+          contacts: {
+            update:
+              primaryContact && payload.contactName
+                ? {
+                    where: { id: primaryContact.id },
+                    data: {
+                      firstName: this.firstNameFromFullName(payload.contactName),
+                      lastName: this.lastNameFromFullName(payload.contactName),
+                      email:
+                        payload.email !== undefined ? payload.email.trim() || null : primaryContact.email,
+                      phone:
+                        payload.phone !== undefined ? payload.phone.trim() || null : primaryContact.phone,
+                    },
+                  }
+                : undefined,
+            create:
+              !primaryContact && payload.contactName
+                ? {
+                    tenantId: scope.tenantId,
                     firstName: this.firstNameFromFullName(payload.contactName),
                     lastName: this.lastNameFromFullName(payload.contactName),
-                    email:
-                      payload.email !== undefined ? payload.email.trim() || null : primaryContact.email,
-                    phone:
-                      payload.phone !== undefined ? payload.phone.trim() || null : primaryContact.phone,
-                  },
-                }
-              : undefined,
-          create:
-            !primaryContact && payload.contactName
-              ? {
-                  tenantId: scope.tenantId,
-                  firstName: this.firstNameFromFullName(payload.contactName),
-                  lastName: this.lastNameFromFullName(payload.contactName),
-                  email: payload.email?.trim() || undefined,
-                  phone: payload.phone?.trim() || undefined,
-                  isPrimary: true,
-                }
-              : undefined,
+                    email: payload.email?.trim() || undefined,
+                    phone: payload.phone?.trim() || undefined,
+                    isPrimary: true,
+                  }
+                : undefined,
+          },
         },
-      },
-    });
+      });
+    } catch (error) {
+      if (this.isUniqueConstraintError(error)) {
+        throw new ConflictException(`Le code client "${payload.code?.trim() || existing.code}" existe deja.`);
+      }
+      throw error;
+    }
 
     if (payload.notes?.trim()) {
       await this.prisma.note.create({
@@ -666,13 +698,42 @@ export class CrmService {
   }
 
   private async nextClientCode(tenantId: string) {
-    const latest = await this.prisma.client.findFirst({
-      where: { tenantId },
-      orderBy: { createdAt: "desc" },
+    // Include soft-deleted rows because the database unique constraint also
+    // includes them. Looking only at the newest client is unsafe when the
+    // newest row has a custom/non-CLI code: it would reset to CLI-0001.
+    const clients = await this.prisma.client.findMany({
+      where: {
+        tenantId,
+        code: {
+          startsWith: "CLI-",
+        },
+      },
       select: { code: true },
     });
-    const current = latest?.code.match(/CLI-(\d{4})$/u)?.[1];
-    return `CLI-${String((current ? Number.parseInt(current, 10) : 0) + 1).padStart(4, "0")}`;
+
+    let highestSequence = 0;
+    for (const client of clients) {
+      const match = client.code.match(/^CLI-(\d+)$/u);
+      if (!match) {
+        continue;
+      }
+
+      const sequenceText = match[1];
+      if (!sequenceText) {
+        continue;
+      }
+
+      const sequence = Number.parseInt(sequenceText, 10);
+      if (Number.isFinite(sequence)) {
+        highestSequence = Math.max(highestSequence, sequence);
+      }
+    }
+
+    return `CLI-${String(highestSequence + 1).padStart(4, "0")}`;
+  }
+
+  private isUniqueConstraintError(error: unknown) {
+    return (error as { code?: string } | null)?.code === "P2002";
   }
 
   private buildMeta(page: number, pageSize: number, totalItems: number) {
